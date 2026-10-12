@@ -1,0 +1,5 @@
+# Downloaded articles are third-party copyright and your OPML is personal: never commit them.
+data/
+*.opml
+*.xml
+__pycache__/
