@@ -277,7 +277,8 @@ def download(n: int, item: dict, out: Path) -> dict:
     allowed, why = robots_allows(item["url"])
     meta["robots"] = why
     if not allowed:
-        meta.update(status="robots-disallowed", http_status=None)
+        unreachable = why == "robots.txt unreachable"
+        meta.update(status="robots-unreachable" if unreachable else "robots-disallowed", http_status=None)
     else:
         status, final_url, ctype, body, error = fetch(item["url"])
         meta.update(http_status=status, final_url=final_url, content_type=ctype, bytes=len(body), error=error)
@@ -333,7 +334,7 @@ def main() -> int:
         for f in concurrent.futures.as_completed(futures):
             m = f.result()
             manifest.append(m)
-            mark = {"ok": " ", "failed": "!", "robots-disallowed": "R"}[m["status"]]
+            mark = {"ok": " ", "failed": "!", "robots-disallowed": "R", "robots-unreachable": "?"}[m["status"]]
             print(f"  {mark} {m['id'][:60]}" + (f"  ({m.get('error') or m['robots']})" if m["status"] != "ok" else ""))
     manifest.sort(key=lambda m: m["id"])
     summary = {
@@ -344,11 +345,13 @@ def main() -> int:
         "ok": sum(m["status"] == "ok" for m in manifest),
         "failed": sum(m["status"] == "failed" for m in manifest),
         "robots_disallowed": sum(m["status"] == "robots-disallowed" for m in manifest),
+        "robots_unreachable": sum(m["status"] == "robots-unreachable" for m in manifest),
         "feed_full_text": sum(m["feed_has_full_text"] for m in manifest),
         "items": manifest,
     }
     (args.out / "manifest.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"\nDone: {summary['ok']} ok, {summary['failed']} failed, {summary['robots_disallowed']} blocked by robots.txt, "
+          f"{summary['robots_unreachable']} skipped (robots.txt unreachable), "
           f"{len(feed_problems)} feed problems; {summary['feed_full_text']} have full text in the feed.")
     print(f"Manifest: {args.out / 'manifest.json'}")
     return 0
