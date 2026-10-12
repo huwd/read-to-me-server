@@ -32,10 +32,14 @@ fn repo_docs_pass_check() {
     assert!(report.links_checked > 100);
 }
 
+/// Copy a directory tree, skipping build output and git metadata.
 fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
+        if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
+            continue;
+        }
         let dst = to.join(entry.file_name());
         if entry.file_type().unwrap().is_dir() {
             copy_tree(&entry.path(), &dst);
@@ -45,7 +49,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A scratch copy of the docs estate, removed on drop.
+/// A scratch copy of the repository (so every link target exists), removed on drop.
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -53,16 +57,7 @@ impl Scratch {
         let dir = std::env::temp_dir().join(format!("xtask-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let root = repo_root();
-        copy_tree(&root.join("docs"), &dir.join("docs"));
-        fs::create_dir_all(dir.join("xtask")).unwrap();
-        for f in [
-            "README.md",
-            "CONTRIBUTING.md",
-            "deny.toml",
-            "xtask/README.md",
-        ] {
-            fs::copy(root.join(f), dir.join(f)).unwrap();
-        }
+        copy_tree(&root, &dir);
         Scratch(dir)
     }
 }
