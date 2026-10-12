@@ -1,0 +1,13 @@
+--- a/src/fallback.rs
++++ b/src/fallback.rs
+@@ -77,7 +77,9 @@
+                     });
+                 }
+                 let cleaned = self.convert_espeak_to_misaki(&phonemes.join(""));
+-                Ok(cleaned)
++                // espeak phonemises the word as a sentence and may end it with a full
++                // stop or comma; inside running text that becomes a spurious pause.
++                Ok(cleaned.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | ' ')).to_string())
+             }
+             Err(e) => Err(FallbackError::Espeak {
+                 word: word.to_string(),

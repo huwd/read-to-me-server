@@ -199,14 +199,37 @@ fn apply_overrides(text: &str, overrides: &[(String, String)]) -> String {
 
 /// Map IPA diphthongs and affricates (as produced by espeak, joined with U+200D or not) to
 /// the single symbols in Kokoro's vocabulary, following Misaki's conventions.
+///
+/// Only sequences joined by U+200D (espeak's notation) are rewritten, plus bare `dʒ`/`tʃ`,
+/// which never occur in Misaki's own notation. Plain "əl", "iə" and so on are left alone:
+/// in the upstream lexicon they are ordinary sequences, not diphthongs.
 fn kokoro_symbols(p: &str) -> String {
-    let p = p.replace('\u{200D}', "");
-    [
+    let p = [
+        ("e\u{200D}ɪ", "A"), ("a\u{200D}ɪ", "I"), ("ə\u{200D}ʊ", "Q"), ("o\u{200D}ʊ", "O"),
+        ("a\u{200D}ʊ", "W"), ("ɔ\u{200D}ɪ", "Y"), ("d\u{200D}ʒ", "ʤ"), ("t\u{200D}ʃ", "ʧ"),
+        ("ə\u{200D}l", "ᵊl"), ("i\u{200D}ə", "ɪə"), ("e\u{200D}ə", "ɛː"), ("ʊ\u{200D}ə", "ʊə"),
+        // Plain diphthong and affricate pairs never occur in Misaki's own notation (it uses
+        // the single symbols), so these only come from espeak and are safe to rewrite.
         ("eɪ", "A"), ("aɪ", "I"), ("əʊ", "Q"), ("oʊ", "O"), ("aʊ", "W"), ("ɔɪ", "Y"),
-        ("dʒ", "ʤ"), ("tʃ", "ʧ"), ("əl", "ᵊl"), ("iə", "ɪə"), ("eə", "ɛː"),
+        ("dʒ", "ʤ"), ("tʃ", "ʧ"),
     ]
     .iter()
-    .fold(p, |acc, (from, to)| acc.replace(from, to))
+    .fold(p.to_string(), |acc, (from, to)| acc.replace(from, to));
+    tidy_spacing(&p.replace('\u{200D}', ""))
+}
+
+/// Match Misaki's (Python) output layout: single spaces, no space before punctuation.
+fn tidy_spacing(p: &str) -> String {
+    let mut out = String::with_capacity(p.len());
+    for word in p.split_whitespace() {
+        // Misaki attaches closing punctuation to the previous word but spaces em dashes.
+        let punct_only = word.chars().all(|c| ".,;:!?…\"()".contains(c));
+        if !out.is_empty() && !punct_only {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out
 }
 
 /// Minimal text normalisation (FR-TTS-02 will own this properly): typographic quotes and
@@ -256,6 +279,13 @@ fn main() {
 
     let text = normalise(&std::fs::read_to_string(&a.text).expect("text file"));
     let text = apply_overrides(&text, &overrides(std::path::Path::new("pronunciations.tsv")));
+    if std::env::var_os("TTS_PHONEMES_ONLY").is_some() {
+        for paragraph in text.split('\n').map(str::trim).filter(|p| !p.is_empty()) {
+            let phonemes = g2p.g2p(paragraph).map(|(p, _)| kokoro_symbols(&p)).unwrap_or_default();
+            println!("{phonemes}");
+        }
+        return;
+    }
     let paragraphs: Vec<&str> = text.split('\n').map(str::trim).filter(|p| !p.is_empty()).collect();
 
     let mut audio: Vec<f32> = Vec::new();

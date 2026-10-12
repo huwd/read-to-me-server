@@ -7,4 +7,5 @@ src=$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/misaki-rs-0.6.0 | head 
 upstream=$(reference/.venv/bin/python -c 'import misaki, os; print(os.path.join(os.path.dirname(misaki.__file__), "data"))')
 rm -rf vendor/misaki-rs && mkdir -p vendor && cp -r "$src" vendor/misaki-rs
 for f in gb_gold gb_silver us_gold us_silver; do cp "$upstream/$f.json" "vendor/misaki-rs/data/$f.json"; done
-echo "vendored misaki-rs with upstream lexicons from $upstream"
+for p in misaki-rs-*.patch; do patch -d vendor/misaki-rs -p1 --quiet < "$p"; done
+echo "vendored misaki-rs with upstream lexicons from $upstream (+ spike patches)"
