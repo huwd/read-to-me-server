@@ -58,7 +58,7 @@ The intersection **{ verbatim narration × private podcast feed × self-hostable
 | **Learning vehicle (Rust, native apps, production engineering)** | Excellent. Real concurrency, untrusted-input parsing, ML inference integration, storage, auth, mobile — a complete system. |
 
 ### Riskiest assumptions to test first (in order)
-1. **Extraction quality across *your* reading sources** is good enough (≥ 80% clean, unattended) — test with a 1-week spike over your last 100 saved articles before any further investment.
+1. **Extraction quality across *your* reading sources** is good enough (≥ 80% clean, unattended) — test with a 1-week spike over your last 100 saved articles before any further investment. **Tested 2026-10-12: held.** 89% clean with the best extractor, 96% excluding page-level failures (server-side paywalls, multi-page articles). See [ADR-0006](adr/0006-extractor-triage-contract.md) Amendment 1.
 2. **Kokoro (or similar) is pleasant enough to listen to for 30+ minutes** — listen to 5 long articles end to end at 1.0× and 1.5×.
 3. **Podcast-feed delivery is actually preferred** over an in-app player — dogfood for 4 weeks.
 4. ~~(Hosted only) People will pay~~ — not tested; hosting is not pursued.
