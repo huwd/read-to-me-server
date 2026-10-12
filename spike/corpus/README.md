@@ -33,9 +33,13 @@ It takes a few minutes: about 100 feeds, then about 100 articles, with at most o
 | `manifest.json` | Run summary (ok / failed / blocked by robots.txt, feed problems) and one entry per article |
 | `NNN-<slug>/source.html` | The article's raw HTML |
 | `NNN-<slug>/feed.html` | The content the feed supplied, if any. When it's long (≥ 300 words, `feed_has_full_text: true`), it's near-ground truth for scoring extraction, so fewer articles need hand-checking. |
-| `NNN-<slug>/meta.json` | URL, final URL, feed, publish date, HTTP status, content type, robots.txt decision, errors |
+| `NNN-<slug>/meta.json` | URL, final URL, feed, publish date, HTTP status, content type, robots.txt decision, errors, and `source_words`: a rough count of all text in the page, including text a paywall hides with CSS or JavaScript |
 
 **Don't commit `data/` or your OPML** (both are ignored here). The articles are third-party copyright, and the OPML is your reading list. Keep the corpus locally or in a private repo; [doc 05 §3](../../docs/05-quality-cicd-observability.md#3-test-strategy-pyramid) expects real-world cases to stay private.
+
+## Paywalled long-form pages
+
+Some publishers (the LRB and NLR among the long-form picks) may serve the full text in the HTML and hide it in the browser. Check `source_words` for those five against the essay's real length. If it's close, the text is in the page, and the extraction spike must make sure extractors don't discard content hidden by CSS. If it's far short, save the page from a logged-in browser over `source.html`.
 
 ## Next
 
