@@ -72,3 +72,26 @@ One new module implementing the trait, plus one registry line, plus golden fixtu
 - Adding sources is additive, and quality is measurable per extractor.
 - Sandbox start-up costs some milliseconds per item; negligible next to synthesis.
 - Sandboxing features depend on the host kernel. The server reports in `/readyz` and logs which protections are active, and refuses to start without at least rlimits and the separate process unless explicitly overridden.
+
+## Amendment 1 (2026-10-12): default extractor chosen by the Phase 0 spike
+
+The spike ([`spike/extraction/`](../../spike/extraction/README.md), [issue #13](https://github.com/huwd/read-to-me-server/issues/13)) measured five Rust extractors on the owner's corpus: 97 pages from 53 sites, 56 with a full-text answer key from their feed. Results:
+
+| Extractor | Clean (F1 ≥ 0.90) | Mean F1 |
+|---|---|---|
+| trafilatura 0.3.0 | 47/53 (89%) | 0.926 |
+| readabilityrs 0.1.4 | 45/53 (85%) | 0.909 |
+| dom_smoothie 0.18.2 | 43/53 (81%) | 0.909 |
+| legible 0.5.1 | 43/53 (81%) | 0.908 |
+| readability 0.3.0 | 36/53 (68%) | 0.802 |
+
+All of them keep article text hidden in the browser by a paywall (the LRB essays). Excluding four pages that fail for every extractor because of the page itself, trafilatura is clean on 96%.
+
+**Decisions:**
+- **`generic-html` wraps the `trafilatura` crate** (Apache-2.0, a port of go-trafilatura and Python Trafilatura). The version is pinned, and output-affecting upgrades bump the extractor `version`.
+- **`dom_smoothie` (MIT) is the registered fallback candidate.** When the post-extraction quality check fails, triage tries it next. It's also the replacement if `trafilatura` stops being maintained: its release history is short (four releases, February–March 2026), so we are prepared to fork or vendor it.
+- **`readability` 0.3.0 is excluded.** It's unmaintained, and it returned nearly nothing on some sites.
+
+**New follow-ups from the failures:**
+- **Server-side paywalls** serve only a teaser. The quality check gains a truncation signal, so the item fails clearly instead of being narrated as a fragment ([#15](https://github.com/huwd/read-to-me-server/issues/15)).
+- **Multi-page articles** need pagination support ([#16](https://github.com/huwd/read-to-me-server/issues/16)).

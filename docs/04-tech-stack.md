@@ -26,7 +26,7 @@ Guiding principles: (1) boring where it doesn't matter, (2) memory-safe where we
 | HTTP client | `reqwest` (rustls) with a **custom DNS resolver + connector** implementing the egress guard | Pin vetted IPs, manual redirects. Wrap in our `SafeFetcher` port; fuzz it. |
 | IP classification | `ipnet` + explicit deny tables (IANA special-purpose registries) | Don't rely on `is_global()` alone (historically unstable). |
 | HTML parsing | `html5ever` / `scraper` (spec-compliant parser) | Same parsing algorithm as browsers → fewer parser-differential surprises. |
-| Generic extraction | Evaluate `dom_smoothie` / `readability`-family crates against the golden corpus; use Trafilatura (Python) only as an offline benchmark in the corpus tooling, never shipped | Pick by F1 on *our* corpus, not by stars. |
+| Generic extraction | **`trafilatura`** crate (Rust port of Trafilatura), version pinned; **`dom_smoothie`** as the fallback candidate | Chosen by F1 on *our* corpus in the Phase 0 spike: 89% clean against 81–85% for the Readability ports ([ADR-0006](adr/0006-extractor-triage-contract.md) Amendment 1). |
 | PDF | `pdfium-render` (PDFium, BSD-style) in the sandbox; alt `pdf-extract`/`lopdf` for simple text PDFs | PDFium is robust; poppler is GPL — avoid for licensing. Layout heuristics (columns, headers/footers, hyphenation) are an adapter concern. |
 | Sanitisation | `ammonia` (only if we ever emit HTML, e.g. feed descriptions — default is plain text) | |
 | Text normalisation | Own module + `unicode-normalization`, `whatlang`/`lingua` for language detection | Normalisation rules per language behind a trait. |
