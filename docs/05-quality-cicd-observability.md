@@ -73,7 +73,7 @@ All third-party actions pinned by commit SHA; `permissions: read-all` default wi
 | Load test (k6) against staging: 10 rps API, 50 rps feed (several podcast apps polling), 20 queued jobs across 4 users | Weekly | [NFR-P1](03-architecture-and-nfrs.md#nfr-p1)/[P4](03-architecture-and-nfrs.md#nfr-p4)/[S1](03-architecture-and-nfrs.md#nfr-s1)/[S2](03-architecture-and-nfrs.md#nfr-s2) regression. Sized for a household instance. |
 | Chaos: `kill -9` the server mid-stage and mid-write, kill the TTS process, TTS 503s → assert no lost/duplicated items and `PRAGMA integrity_check` = ok | Weekly | [NFR-R2](03-architecture-and-nfrs.md#nfr-r2)/[R3](03-architecture-and-nfrs.md#nfr-r3), [NFR-S1](03-architecture-and-nfrs.md#nfr-s1). |
 | Podcast app compatibility (manual checklist until automatable) | Per release | [NFR-C2](03-architecture-and-nfrs.md#nfr-c2). |
-| Dependency updates (Renovate, grouped, automerge patch if green) | Daily | Keep supply chain fresh. |
+| Dependency updates (Dependabot for Cargo and Actions, grouped, 7-day cooldown, reviewed like any PR; [`.github/dependabot.yml`](../.github/dependabot.yml)) | Weekly | Keep the supply chain fresh without adopting releases in their riskiest first days. |
 | OpenSSF Scorecard | Weekly | Supply-chain posture badge. |
 | Backup restore drill: restore the latest built-in backup file into a fresh stack and run the acceptance suite | Weekly in CI; monthly on the owner's instance | [NFR-R5](03-architecture-and-nfrs.md#nfr-r5) is real only if tested. |
 
