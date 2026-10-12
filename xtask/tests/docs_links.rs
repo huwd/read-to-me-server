@@ -136,6 +136,7 @@ fn check_reports_broken_anchor() {
     let doc = scratch.0.join("docs/02-product-viability.md");
     let mut text = fs::read_to_string(&doc).unwrap();
     text.push_str("\n[broken](03-architecture-and-nfrs.md#nope) and [gone](nowhere.md)\n");
+    text.push_str("Inline code like `[word](/not/a/link/)` is ignored.\n");
     fs::write(&doc, &text).unwrap();
     let report = docs_links::check(&scratch.0).unwrap();
     assert!(
@@ -149,5 +150,10 @@ fn check_reports_broken_anchor() {
             .problems
             .iter()
             .any(|p| p.contains("missing file nowhere.md"))
+    );
+    assert!(
+        !report.problems.iter().any(|p| p.contains("/not/a/link/")),
+        "{:#?}",
+        report.problems
     );
 }

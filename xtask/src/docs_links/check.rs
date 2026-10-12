@@ -44,7 +44,9 @@ pub fn check(docs: &Docs) -> io::Result<CheckReport> {
             if fence || is_heading(line) {
                 continue;
             }
-            for c in LINK_TARGET.captures_iter(line) {
+            // Link syntax inside inline code (e.g. `[word](/phonemes/)`) is not a link.
+            let without_code = CODE_SPAN.replace_all(line, "");
+            for c in LINK_TARGET.captures_iter(&without_code) {
                 let target = &c[1];
                 if SCHEME.is_match(target) {
                     continue;
