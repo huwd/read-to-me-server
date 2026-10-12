@@ -1,0 +1,35 @@
+# Version updates (docs/05 §2.4). Commit subjects follow the Conventional Commits
+# standard checked by `cargo xtask commits`; Dependabot is exempt from the DCO sign-off.
+# A 7-day cooldown means brand-new releases (the window in which compromised
+# packages are usually caught and pulled) are never proposed straight away.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
