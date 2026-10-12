@@ -15,7 +15,7 @@ There is no public hosted environment ([doc 07 Q2](07-roadmap-and-open-questions
 - Conventional Commits → `release-please` generates changelog, semver tags and GitHub Releases.
 - `CODEOWNERS`, PR template (what/why/risk/test evidence/FR IDs), issue templates (bug, extraction failure with URL, feature).
 - ADRs for every significant decision (`docs/adr/0001-record-architecture-decisions.md` onwards).
-- `SECURITY.md` (disclosure policy, security.txt), [`CONTRIBUTING.md`](../CONTRIBUTING.md) (DCO sign-off), licence AGPL-3.0-or-later ([ADR-0010](adr/0010-licence-and-third-party-policy.md)).
+- [`SECURITY.md`](../SECURITY.md) (private disclosure policy; security.txt once there's a website), [`CONTRIBUTING.md`](../CONTRIBUTING.md) (DCO sign-off), licence AGPL-3.0-or-later ([ADR-0010](adr/0010-licence-and-third-party-policy.md)).
 - Toolchain pinned (`rust-toolchain.toml`, `mise.toml`); `just` recipes mirror CI jobs so "green locally ⇒ green in CI".
 - Pre-commit hooks: fmt, clippy (fast), secret scan (Gitleaks or Betterleaks, pending [ADR-0013](adr/0013-secret-scanner.md)), conventional-commit lint.
 

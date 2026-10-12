@@ -43,4 +43,4 @@ Signed-off-by: Your Name <you@example.com>
 
 ## Security issues
 
-Please don't open public issues for vulnerabilities. See `SECURITY.md` (to be added in Iteration 0) for private disclosure.
+Please don't open public issues for vulnerabilities. See [SECURITY.md](SECURITY.md) for private disclosure.
