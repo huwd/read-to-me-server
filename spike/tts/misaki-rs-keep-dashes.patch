@@ -1,0 +1,20 @@
+--- a/src/g2p.rs
++++ b/src/g2p.rs
+@@ -408,7 +408,7 @@
+                                 'ú' | 'ù' | 'û' | 'ü' => 'u',
+                                 'ñ' => 'n',
+                                 'ç' => 'c',
+-                                '—' | '–' => ' ', // map dashes to spaces
++                                '–' => '—', // en dash as em dash: both are pause cues
+                                 _ => c,
+                             })
+                             .collect();
+@@ -429,7 +429,7 @@
+                                     // intonation). Anything else (em-dash, ellipsis,
+                                     // parens, …) still collapses to a single space,
+                                     // matching the prior whitespace fallback.
+-                                    if matches!(c, ';' | ':' | ',' | '.' | '!' | '?') {
++                                    if matches!(c, ';' | ':' | ',' | '.' | '!' | '?' | '—' | '…') {
+                                         tokens[i].phonemes = Some(c.to_string());
+                                     } else {
+                                         tokens[i].phonemes = Some(" ".to_string());
