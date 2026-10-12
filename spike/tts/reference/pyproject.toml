@@ -1,0 +1,24 @@
+# Throwaway Phase 0 comparison tooling (issue #17; ADR-0007 "Validation"). Never shipped.
+[project]
+name = "tts-reference"
+version = "0.0.0"
+description = "Python Kokoro reference and ASR scoring for the Rust TTS spike"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "kokoro>=0.9.4",
+    "soundfile",
+    "faster-whisper",
+    "jiwer",
+    "torch",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
