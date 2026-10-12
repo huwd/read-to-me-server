@@ -1,0 +1,57 @@
+# cargo-deny configuration. Licence policy is defined in
+# docs/adr/0010-licence-and-third-party-policy.md — change both together.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Anything not listed here fails `cargo deny check licenses`.
+allow = [
+    # Permissive
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0", # Boost Software License (not Business Source License)
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    # Weak copyleft
+    "MPL-2.0",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    # Strong / network copyleft (v3 family, compatible with AGPL-3.0-or-later)
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+]
+confidence-threshold = 0.93
+# The allow-list is policy, not an inventory: unused entries are expected.
+unused-allowed-license = "allow"
+# Per-crate exceptions require a justification comment and an ADR-0010 reference.
+exceptions = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
