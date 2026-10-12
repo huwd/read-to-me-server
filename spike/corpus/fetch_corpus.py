@@ -27,11 +27,11 @@ from __future__ import annotations  # Python 3.9 compatibility for type hints
 
 # --- Hand-picked long-form articles (tagged "long-form" in the manifest) ------
 LONG_FORM_URLS = [
-    # "https://www.lrb.co.uk/the-paper/...",
-    # "https://...",
-    # "https://...",
-    # "https://...",
-    # "https://...",
+    "https://www.lrb.co.uk/the-paper/v37/n03/margaret-macmillan/a-bit-of-chaos",
+    "https://www.lrb.co.uk/the-paper/v29/n14/jonathan-wright/breathtaking-co-ordination",
+    "https://www.lrb.co.uk/the-paper/v40/n20/simon-wren-lewis/bait-and-switch",
+    "https://www.lrb.co.uk/the-paper/v43/n24/john-lanchester/as-the-lock-rattles",
+    "https://newleftreview.org/issues/ii119/articles/4444",
 ]
 
 # --- Settings -----------------------------------------------------------------
