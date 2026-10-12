@@ -32,20 +32,31 @@ fn repo_docs_pass_check() {
     assert!(report.links_checked > 100);
 }
 
-/// Copy a directory tree, skipping build output and git metadata.
-fn copy_tree(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
-            continue;
+/// Copy the repository's files (tracked, plus untracked but not ignored) into `to`, so
+/// ignored build output, models and virtual environments never come along.
+fn copy_repo(from: &Path, to: &Path) {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(from)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git ls-files failed");
+    for rel in out.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let rel = Path::new(std::str::from_utf8(rel).unwrap());
+        let src = from.join(rel);
+        if !src.is_file() {
+            continue; // deleted in the working tree
         }
-        let dst = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_tree(&entry.path(), &dst);
-        } else {
-            fs::copy(entry.path(), dst).unwrap();
-        }
+        let dst = to.join(rel);
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        fs::copy(src, dst).unwrap();
     }
 }
 
@@ -57,7 +68,7 @@ impl Scratch {
         let dir = std::env::temp_dir().join(format!("xtask-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let root = repo_root();
-        copy_tree(&root, &dir);
+        copy_repo(&root, &dir);
         Scratch(dir)
     }
 }
