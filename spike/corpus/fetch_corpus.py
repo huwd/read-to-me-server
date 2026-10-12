@@ -245,8 +245,9 @@ def select(items: list[dict], total: int, per_feed: int, exclude: set[str]) -> l
 
 # --- Articles -----------------------------------------------------------------
 def words(html_text: str) -> int:
-    text = re.sub(r"<[^>]+>", " ", html.unescape(html_text))
-    return len(text.split())
+    text = re.sub(r"(?is)<(script|style|noscript|template)\b.*?</\1\s*>", " ", html_text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return len(html.unescape(text).split())
 
 
 def slug(text: str) -> str:
@@ -282,6 +283,9 @@ def download(n: int, item: dict, out: Path) -> dict:
         meta.update(http_status=status, final_url=final_url, content_type=ctype, bytes=len(body), error=error)
         if body:
             (folder / "source.html").write_bytes(body)
+            # Rough size of all text in the page (scripts/styles removed), including
+            # anything hidden by CSS/JS paywalls: compare with the expected article length.
+            meta["source_words"] = words(body.decode("utf-8", "replace"))
             if not meta["title"]:
                 t = re.search(rb"<title[^>]*>(.*?)</title>", body, re.S | re.I)
                 if t:
