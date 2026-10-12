@@ -6,7 +6,7 @@ Throwaway spike tooling for [issue #3](https://github.com/huwd/read-to-me-server
 
 Requires Python 3.9+; nothing to install.
 
-1. Put your five long-form URLs in `LONG_FORM_URLS` at the top of `fetch_corpus.py`.
+1. Check the five long-form URLs in `LONG_FORM_URLS` at the top of `fetch_corpus.py` (four LRB essays and one NLR article are set).
 2. Check what would be fetched, without downloading articles:
    ```sh
    python3 spike/corpus/fetch_corpus.py ~/Downloads/subscriptions.xml --dry-run
