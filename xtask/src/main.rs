@@ -4,14 +4,16 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use xtask::docs_links;
+use xtask::{commits, docs_links};
 
 const USAGE: &str = "\
 usage: cargo xtask <command>
 
 commands:
   docs-links fix     add definition anchors and turn references in the docs into links
-  docs-links check   fail on broken relative links/anchors or unlinked references";
+  docs-links check   fail on broken relative links/anchors or unlinked references
+  commits [RANGE]    check commit messages in RANGE (default origin/main..HEAD) against
+                     the commit standards: Conventional Commits, 50/72, DCO sign-off";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -43,6 +45,23 @@ fn main() -> ExitCode {
             );
             report.problems.is_empty()
         }),
+        ["commits"] | ["commits", _] => {
+            let range = args.get(1).copied().unwrap_or("origin/main..HEAD");
+            commits::check(&root, range).map(|report| {
+                for (sha, subject, problems) in &report.failures {
+                    eprintln!("{sha} {subject}");
+                    for p in problems {
+                        eprintln!("    - {p}");
+                    }
+                }
+                println!(
+                    "{} commit(s) checked in {range}, {} with problems",
+                    report.checked,
+                    report.failures.len()
+                );
+                report.failures.is_empty()
+            })
+        }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
