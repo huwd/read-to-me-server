@@ -1,6 +1,11 @@
 # 05 — Quality Stack: CI/CD, Testing & Observability
 
-Rule: **the pipeline exists before the first line of product code.** Iteration 0 delivers a "walking skeleton" — `GET /healthz` returning 200 — that is linted, tested, scanned, built for two architectures, signed, deployed to staging, traced end-to-end and visible on a dashboard. Every later feature rides an already-proven path.
+Rule: **the pipeline exists before the first line of product code.** Iteration 0 builds up in two steps:
+
+1. **Minimal server:** `GET /healthz` returning 200, linted, tested and scanned in CI.
+2. **Walking skeleton** ([issue #12](https://github.com/huwd/read-to-me-server/issues/12)): the thinnest version of the system that runs end to end through the real architecture and the real pipeline. A URL is submitted, fetched through the egress guard, extracted in the sandbox, "narrated" by a fake TTS engine, encoded and published to the feed, all inside a multi-arch, signed image running on the compose staging stack, traced and visible on a dashboard.
+
+Every later feature then fills in a stage of a path that already works.
 
 **Environments.** The deployment target is self-hosted, so:
 - **staging** = an ephemeral `docker compose` stack started by CI for each merge (optionally also a long-lived staging stack on the owner's homelab);
