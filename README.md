@@ -4,7 +4,22 @@ Send a long-form article (URL, HTML or PDF) to your own server. It extracts the 
 
 > **Target:** self-hosted, for one person or a household. A public hosted service is not a goal; decisions that would affect one are flagged **⚑ Hosting impact** in the docs.
 
-> Status: **specification / pre-code.** No product code exists yet. The CI/CD and observability foundations come first (see [doc 05](docs/05-quality-cicd-observability.md)).
+> Status: **Phase 1 foundations.** A minimal server exists, with health endpoints only; no product features yet. Next milestone: the [walking skeleton](https://github.com/huwd/read-to-me-server/issues/12), a URL running end to end into the feed. See the roadmap in [doc 07](docs/07-roadmap-and-open-questions.md).
+
+## Running the server
+
+```sh
+cargo run --bin rtm -- server           # listens on 127.0.0.1:8080
+curl localhost:8080/healthz             # {"status":"ok","version":"0.1.0"}
+curl localhost:8080/readyz              # {"status":"ready","checks":[]}
+```
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `RTM_LISTEN_ADDR` | `127.0.0.1:8080` | Address to listen on |
+| `RTM_LOG` | `info` | Log filter (`tracing` `EnvFilter` syntax, e.g. `rtm_api=debug`) |
+
+Logs are JSON on stdout. Requests are logged by route pattern only, never by raw path or query string, because those will carry tokens. The server stops gracefully on SIGTERM or Ctrl-C.
 
 ## Planning documents
 
