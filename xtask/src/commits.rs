@@ -7,7 +7,9 @@
 //! - body lines wrapped at 72 characters (trailers and lines containing URLs exempt)
 //! - a DCO `Signed-off-by: Name <email>` trailer (see CONTRIBUTING.md)
 //!
-//! Merge commits are skipped. Judgement calls the standard also makes (imperative mood,
+//! Merge commits are skipped. Commits authored by bots in [`BOT_AUTHORS`] (Dependabot)
+//! only get the subject format and type check: they can't add a DCO sign-off, and their
+//! bodies carry release notes. Judgement calls the standard also makes (imperative mood,
 //! a body for non-trivial changes, one logical change per commit) are left to review.
 
 use std::io;
@@ -21,6 +23,8 @@ pub const TYPES: &[&str] = &[
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore",
 ];
 pub const SUBJECT_MAX: usize = 50;
+/// Authors exempt from sign-off, length and body rules (subject format still applies).
+pub const BOT_AUTHORS: &[&str] = &["dependabot[bot]"];
 pub const BODY_WIDTH: usize = 72;
 
 static SUBJECT: LazyLock<Regex> = LazyLock::new(|| {
@@ -33,12 +37,9 @@ static SIGNOFF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^Signed-off-by: [^<\n]+ <[^@>\s]+@[^>\s]+>$").expect("valid regex")
 });
 
-/// Problems with one commit message (empty when it conforms).
-pub fn lint_message(message: &str) -> Vec<String> {
+/// Subject format and type only (the part bots must also follow).
+pub fn lint_subject_format(subject: &str) -> Vec<String> {
     let mut problems = Vec::new();
-    let mut lines = message.lines();
-    let subject = lines.next().unwrap_or("").trim_end();
-
     match SUBJECT.captures(subject) {
         None => problems.push(format!(
             "subject must be `type(scope): description` (got {subject:?})"
@@ -53,6 +54,14 @@ pub fn lint_message(message: &str) -> Vec<String> {
             }
         }
     }
+    problems
+}
+
+/// Problems with one commit message (empty when it conforms).
+pub fn lint_message(message: &str) -> Vec<String> {
+    let mut lines = message.lines();
+    let subject = lines.next().unwrap_or("").trim_end();
+    let mut problems = lint_subject_format(subject);
     let len = subject.chars().count();
     if len > SUBJECT_MAX {
         problems.push(format!(
@@ -97,7 +106,7 @@ pub fn check(root: &Path, range: &str) -> io::Result<CommitReport> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["log", "--no-merges", "--format=%h%x00%B%x1e", range])
+        .args(["log", "--no-merges", "--format=%h%x00%an%x00%B%x1e", range])
         .output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
@@ -112,11 +121,18 @@ pub fn check(root: &Path, range: &str) -> io::Result<CommitReport> {
     };
     for record in text.split('\x1e') {
         let record = record.trim_start_matches('\n');
-        let Some((sha, message)) = record.split_once('\0') else {
+        let mut fields = record.splitn(3, '\0');
+        let (Some(sha), Some(author), Some(message)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
             continue;
         };
         report.checked += 1;
-        let problems = lint_message(message.trim_end());
+        let problems = if BOT_AUTHORS.contains(&author) {
+            lint_subject_format(message.lines().next().unwrap_or("").trim_end())
+        } else {
+            lint_message(message.trim_end())
+        };
         if !problems.is_empty() {
             let subject = message.lines().next().unwrap_or("").to_string();
             report.failures.push((sha.to_string(), subject, problems));
@@ -184,6 +200,17 @@ mod tests {
         assert!(p.iter().any(|p| p.contains("blank line")), "{p:?}");
         let p = lint_message(&msg("docs: add spec", &"word ".repeat(20)));
         assert!(p.iter().any(|p| p.contains("wrap at 72")), "{p:?}");
+    }
+
+    #[test]
+    fn bot_subjects_only_need_the_format() {
+        assert!(
+            lint_subject_format(
+                "build(deps): bump the cargo group across 1 directory with 3 updates"
+            )
+            .is_empty()
+        );
+        assert!(!lint_subject_format("Bump regex from 1.11.1 to 1.11.2").is_empty());
     }
 
     #[test]
