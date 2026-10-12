@@ -5,8 +5,20 @@ Project tooling for read-to-me, written in Rust and run through Cargo (the [`car
 ```sh
 cargo xtask docs-links fix     # add definition anchors; turn references in the docs into links
 cargo xtask docs-links check   # what CI runs: broken links/anchors or unlinked references fail
+cargo xtask commits [RANGE]    # commit standards + DCO for RANGE (default origin/main..HEAD)
 cargo test -p xtask            # tool's own tests
 ```
+
+## commits
+
+Checks every non-merge commit in a git range against the commit standards in [CONTRIBUTING.md](../CONTRIBUTING.md):
+- a Conventional Commits subject with an allowed type and optional lowercase scope;
+- a subject of at most 50 characters, with no trailing full stop;
+- a blank line after the subject;
+- body lines of at most 72 characters (trailers and lines containing URLs are exempt);
+- a `Signed-off-by: Name <email>` trailer.
+
+Imperative mood, whether a body is needed, and one-change-per-commit are judgement calls left to review. CI runs it over the pull request's commits.
 
 ## docs-links
 
