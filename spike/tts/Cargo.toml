@@ -1,0 +1,20 @@
+[package]
+name = "tts-spike"
+version = "0.0.0"
+description = "Phase 0 spike: Kokoro TTS in Rust via ONNX Runtime and misaki-rs (issue #17). Throwaway; never shipped."
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# Standalone workspace: spike dependencies stay out of the product lockfile and gates.
+[workspace]
+
+[dependencies]
+hound = "3.5.1"
+misaki-rs = "0.6"
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "copy-dylibs", "api-27"] }
+serde_json = "1.0.154"
+
+# Spike: misaki-rs with the upstream Misaki lexicons (see vendor-misaki.sh).
+[patch.crates-io]
+misaki-rs = { path = "vendor/misaki-rs" }
