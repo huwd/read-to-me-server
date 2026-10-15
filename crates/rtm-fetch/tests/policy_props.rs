@@ -70,6 +70,22 @@ proptest! {
         }
     }
 
+    /// A configured deny beats an unsafe allow, whichever spelling each one uses.
+    #[test]
+    fn denies_beat_allows_in_any_spelling(bits in any::<u32>(), d in 0..3usize, a in 0..3usize, q in 0..3usize) {
+        let v4 = Ipv4Addr::from(bits);
+        let spell = |i: usize| -> IpAddr {
+            match i {
+                0 => IpAddr::V4(v4),
+                1 => IpAddr::V6(v4.to_ipv6_mapped()),
+                _ => IpAddr::V6(nat64(v4)),
+            }
+        };
+        let host = |ip: IpAddr| ipnet::IpNet::from(ip);
+        let policy = Policy::default().deny([host(spell(d))]).unsafe_allow([host(spell(a))]);
+        prop_assert_eq!(policy.check_ip(spell(q)), Err(rtm_fetch::DenyReason::Configured));
+    }
+
     /// IPv6 outside global unicast (`2000::/3`) is refused, unless it embeds an IPv4
     /// address (judged above).
     #[test]
