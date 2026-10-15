@@ -234,6 +234,7 @@ fn classify(err: &reqwest::Error) -> FetchError {
 
 /// The egress guard. Cheap to share; holds a connection pool and the robots.txt cache.
 pub struct SafeFetcher {
+    #[expect(clippy::disallowed_types, reason = "this is the egress guard")]
     client: reqwest::Client,
     policy: Arc<Policy>,
     config: Config,
@@ -265,7 +266,7 @@ impl SafeFetcher {
         });
         // The one place an HTTP client is built (ADR-0005); the lint ban elsewhere
         // keeps it that way.
-        #[expect(clippy::disallowed_methods, reason = "this is the egress guard")]
+        #[expect(clippy::disallowed_types, reason = "this is the egress guard")]
         let builder = reqwest::Client::builder();
         let client = builder
             .dns_resolver(resolver)
