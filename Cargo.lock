@@ -1873,6 +1873,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtm-blobs"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "rtm-domain",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "rtm-domain"
 version = "0.1.0"
 dependencies = [
