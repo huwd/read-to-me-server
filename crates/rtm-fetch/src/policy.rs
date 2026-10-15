@@ -137,20 +137,47 @@ impl Policy {
     }
 
     /// Whether `ip` may be connected to.
+    ///
+    /// An address that reaches an IPv4 destination is judged in every spelling (IPv4,
+    /// mapped, NAT64): a configured deny of any spelling always wins over an allow.
     pub fn check_ip(&self, ip: IpAddr) -> Result<(), DenyReason> {
-        if self.extra_deny.iter().any(|n| n.contains(&ip)) {
+        let reached = match ip {
+            IpAddr::V6(v6) => embedded_v4(v6),
+            IpAddr::V4(v4) => Some(v4),
+        };
+        // Every way of writing the destination, so configured ranges match whichever
+        // spelling the operator used.
+        let spellings = || {
+            std::iter::once(ip).chain(reached.into_iter().flat_map(|v4| {
+                let [a, b, c, d] = v4.octets();
+                let nat64 = Ipv6Addr::new(
+                    0x64,
+                    0xff9b,
+                    0,
+                    0,
+                    0,
+                    0,
+                    u16::from_be_bytes([a, b]),
+                    u16::from_be_bytes([c, d]),
+                );
+                [
+                    IpAddr::V4(v4),
+                    IpAddr::V6(v4.to_ipv6_mapped()),
+                    IpAddr::V6(nat64),
+                ]
+            }))
+        };
+        if spellings().any(|a| self.extra_deny.iter().any(|n| n.contains(&a))) {
             return Err(DenyReason::Configured);
         }
-        if self.unsafe_allow.iter().any(|n| n.contains(&ip)) {
+        if spellings().any(|a| self.unsafe_allow.iter().any(|n| n.contains(&a))) {
             return Ok(());
         }
-        match ip {
-            IpAddr::V4(v4) => self.check_v4(v4),
-            IpAddr::V6(v6) => match embedded_v4(v6) {
-                // Judge by what would really be reached, including configured ranges.
-                Some(v4) => self.check_ip(IpAddr::V4(v4)),
-                None => self.check_v6(v6),
-            },
+        match (ip, reached) {
+            // Judge by what would really be reached.
+            (_, Some(v4)) => self.check_v4(v4),
+            (IpAddr::V6(v6), None) => self.check_v6(v6),
+            (IpAddr::V4(_), None) => unreachable!("an IPv4 address reaches itself"),
         }
     }
 
@@ -287,6 +314,39 @@ mod tests {
         assert!(p.check_ip("10.1.2.3".parse().unwrap()).is_ok());
         assert!(p.check_ip("::ffff:10.1.2.3".parse().unwrap()).is_ok());
         assert!(p.check_ip("10.2.0.1".parse().unwrap()).is_err());
+    }
+
+    /// A deny always beats an allow, whichever spelling (IPv4, mapped, NAT64) each uses.
+    #[test]
+    fn denies_win_across_spellings() {
+        let deny_v4 = Policy::default()
+            .deny(["10.1.2.3/32".parse().unwrap()])
+            .unsafe_allow([
+                "::ffff:10.1.0.0/112".parse().unwrap(),
+                "64:ff9b::a01:0/112".parse().unwrap(),
+                "10.1.0.0/16".parse().unwrap(),
+            ]);
+        for ip in ["10.1.2.3", "::ffff:10.1.2.3", "64:ff9b::a01:203"] {
+            assert_eq!(
+                deny_v4.check_ip(ip.parse().unwrap()),
+                Err(DenyReason::Configured),
+                "{ip}"
+            );
+        }
+        for ip in ["10.1.2.4", "::ffff:10.1.2.4", "64:ff9b::a01:204"] {
+            assert!(deny_v4.check_ip(ip.parse().unwrap()).is_ok(), "{ip}");
+        }
+
+        let deny_v6 = Policy::default()
+            .deny(["::ffff:10.1.2.3/128".parse().unwrap()])
+            .unsafe_allow(["10.1.0.0/16".parse().unwrap()]);
+        for ip in ["10.1.2.3", "::ffff:10.1.2.3", "64:ff9b::a01:203"] {
+            assert_eq!(
+                deny_v6.check_ip(ip.parse().unwrap()),
+                Err(DenyReason::Configured),
+                "{ip}"
+            );
+        }
     }
 
     #[test]
