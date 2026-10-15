@@ -144,6 +144,35 @@ async fn requests_without_a_valid_token_are_401() {
         assert_problem(&reply, StatusCode::UNAUTHORIZED, "UNAUTHENTICATED");
         assert_eq!(reply.headers[header::WWW_AUTHENTICATE], "Bearer");
     }
+    // The scheme name is case-insensitive and may be followed by several spaces.
+    for value in [
+        format!("bearer {TOKEN}"),
+        format!("BEARER {TOKEN}"),
+        format!("Bearer   {TOKEN}"),
+    ] {
+        let req = Request::get(format!("/v1/items/{id}"))
+            .header(header::AUTHORIZATION, value.as_str())
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(app.send(req).await.status, StatusCode::OK, "{value:?}");
+    }
+    // The token itself is exact.
+    for value in [
+        format!("Bearer {}", TOKEN.to_uppercase()),
+        format!("Bearer {TOKEN} "),
+        format!("Bearer{TOKEN}"),
+        "Bearer ".to_string(),
+    ] {
+        let req = Request::get(format!("/v1/items/{id}"))
+            .header(header::AUTHORIZATION, value.as_str())
+            .body(Body::empty())
+            .unwrap();
+        assert_problem(
+            &app.send(req).await,
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHENTICATED",
+        );
+    }
     // A non-Bearer scheme carrying the right token is still refused.
     let basic = Request::get(format!("/v1/items/{id}"))
         .header(header::AUTHORIZATION, format!("Basic {TOKEN}"))
@@ -229,9 +258,10 @@ async fn malformed_bodies_are_problems() {
     );
 
     let huge = format!(r#"{{"url":"https://example.org/{}"}}"#, "a".repeat(20_000));
-    assert_eq!(
-        app.send(post(&huge, Some(TOKEN))).await.status,
-        StatusCode::PAYLOAD_TOO_LARGE
+    assert_problem(
+        &app.send(post(&huge, Some(TOKEN))).await,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "INVALID_REQUEST",
     );
 }
 

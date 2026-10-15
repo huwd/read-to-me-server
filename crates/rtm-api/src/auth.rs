@@ -42,6 +42,15 @@ impl StaticToken {
     }
 }
 
+/// The token from an `Authorization` value using the Bearer scheme. The scheme name is
+/// case-insensitive (RFC 9110 §11.1) and may be followed by several spaces (RFC 6750
+/// §2.1); the token itself is compared exactly.
+fn bearer_token(value: &str) -> Option<&str> {
+    let (scheme, rest) = value.split_once(' ')?;
+    let token = rest.trim_start_matches(' ');
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
+}
+
 /// Middleware: reject requests without a valid `Authorization: Bearer` token, and make
 /// the authenticated [`UserId`] available to handlers as an extension.
 pub async fn require_token(
@@ -53,7 +62,7 @@ pub async fn require_token(
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(bearer_token);
     match presented.and_then(|t| auth.verify(t)) {
         Some(user) => {
             let user = user.clone();
