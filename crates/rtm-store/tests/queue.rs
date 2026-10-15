@@ -468,3 +468,62 @@ async fn a_stale_job_cannot_touch_a_new_job_that_reuses_its_id() {
     );
     db.store.complete(&extract, "w1", 5).await.unwrap();
 }
+
+#[tokio::test]
+async fn users_take_turns_even_within_one_millisecond() {
+    let db = db().await;
+    for i in 0..3 {
+        db.store
+            .submit(&user("ann"), &format!("https://example.org/a{i}"), i)
+            .await
+            .unwrap();
+    }
+    for i in 0..3 {
+        db.store
+            .submit(&user("bob"), &format!("https://example.org/b{i}"), 10 + i)
+            .await
+            .unwrap();
+    }
+    let mut order = Vec::new();
+    for _ in 0..6 {
+        let job = db.store.claim("w1", 100, LEASE).await.unwrap().unwrap();
+        order.push(job.user.0);
+    }
+    assert_eq!(order, ["ann", "bob", "ann", "bob", "ann", "bob"]);
+}
+
+/// NFR-M3: a database created by an earlier release opens and keeps working.
+#[tokio::test]
+async fn a_database_from_the_first_schema_upgrades() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rtm.db");
+    {
+        let mut first = sqlx::migrate!();
+        first.migrations = first.migrations[..1].to_vec().into();
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let pool = sqlx::SqlitePool::connect(&url).await.unwrap();
+        first.run(&pool).await.unwrap();
+        // Turns were millisecond timestamps then.
+        sqlx::query("INSERT INTO queue_turns VALUES ('ann', 1760000000000)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+    let store = Store::open(&path, QueuePolicy::default()).await.unwrap();
+    store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    store
+        .submit(&user("bob"), "https://example.org/b", 1)
+        .await
+        .unwrap();
+    // Bob has never had a turn, so goes before Ann; then Ann's turn follows on.
+    let order: Vec<String> = [
+        store.claim("w1", 10, LEASE).await.unwrap().unwrap().user.0,
+        store.claim("w1", 10, LEASE).await.unwrap().unwrap().user.0,
+    ]
+    .into();
+    assert_eq!(order, ["bob", "ann"]);
+}

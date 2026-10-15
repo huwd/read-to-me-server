@@ -299,13 +299,14 @@ impl JobQueue for Store {
         loop {
             let mut tx = self.begin().await?;
             // Runnable: due, and either never leased or with an expired lease (a crashed
-            // worker). Users whose turn was longest ago go first; then oldest due first.
+            // worker). Users whose last turn was earliest go first (users never served yet
+            // before anyone); then oldest due first.
             let row = sqlx::query(
                 "UPDATE jobs SET attempts = attempts + 1, locked_by = ?1, locked_until = ?2 \
                  WHERE id = ( \
                    SELECT j.id FROM jobs j LEFT JOIN queue_turns t ON t.user_id = j.user_id \
                    WHERE j.run_after <= ?3 AND (j.locked_until IS NULL OR j.locked_until <= ?3) \
-                   ORDER BY COALESCE(t.last_claimed_at, -1), j.run_after, j.id LIMIT 1) \
+                   ORDER BY COALESCE(t.turn, 0), j.run_after, j.id LIMIT 1) \
                  RETURNING id, item_id, user_id, stage, attempts, locked_until",
             )
             .bind(worker)
@@ -319,11 +320,13 @@ impl JobQueue for Store {
             };
             let job = job_from_row(&row)?;
             sqlx::query(
-                "INSERT INTO queue_turns (user_id, last_claimed_at) VALUES (?1, ?2) \
-                 ON CONFLICT (user_id) DO UPDATE SET last_claimed_at = ?2",
+                // Turns are a strictly increasing sequence, not a time: claims in the same
+                // millisecond must still order users.
+                "INSERT INTO queue_turns (user_id, turn) \
+                 VALUES (?1, (SELECT COALESCE(MAX(turn), 0) + 1 FROM queue_turns)) \
+                 ON CONFLICT (user_id) DO UPDATE SET turn = excluded.turn",
             )
             .bind(&job.user.0)
-            .bind(now)
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
