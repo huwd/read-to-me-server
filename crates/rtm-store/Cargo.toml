@@ -1,0 +1,21 @@
+[package]
+name = "rtm-store"
+version = "0.1.0"
+description = "SQLite storage and job queue for read-to-me (ADR-0003)."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+rtm-ports = { version = "0.1.0", path = "../rtm-ports" }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+tokio = { version = "1.53.3", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
