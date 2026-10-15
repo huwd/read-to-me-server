@@ -1,0 +1,8 @@
+# Outbound HTTP goes only through rtm_fetch::SafeFetcher, the egress guard (ADR-0005).
+# Building a client anywhere else would bypass its address checks, so it is a lint error.
+disallowed-methods = [
+    { path = "reqwest::Client::new", reason = "outbound HTTP must go through rtm_fetch::SafeFetcher (ADR-0005)" },
+    { path = "reqwest::Client::builder", reason = "outbound HTTP must go through rtm_fetch::SafeFetcher (ADR-0005)" },
+    { path = "reqwest::ClientBuilder::new", reason = "outbound HTTP must go through rtm_fetch::SafeFetcher (ADR-0005)" },
+    { path = "reqwest::get", reason = "outbound HTTP must go through rtm_fetch::SafeFetcher (ADR-0005)" },
+]
