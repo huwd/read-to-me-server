@@ -92,13 +92,51 @@ impl BlobStore {
     }
 }
 
-fn write_atomic(path: &Path, tmp_dir: &Path, bytes: &[u8]) -> io::Result<()> {
-    if path.exists() {
-        return Ok(()); // immutable: same key, same content
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    File::open(dir)?.sync_all()
+}
+
+/// Create `dir` and any missing ancestors, fsyncing the parent of each directory
+/// created so the new entries survive a power failure. `create_dir_all` alone leaves
+/// them in the page cache: a blob could be reported stored, referenced from the
+/// database, and then lose its directory on recovery.
+fn create_dir_durable(dir: &Path) -> io::Result<()> {
+    let mut missing = Vec::new();
+    let mut current = Some(dir);
+    while let Some(d) = current {
+        if d.as_os_str().is_empty() || d.is_dir() {
+            break;
+        }
+        missing.push(d);
+        current = d.parent();
     }
+    for d in missing.into_iter().rev() {
+        match fs::create_dir(d) {
+            Ok(()) => {}
+            // Another writer got there first; its parent fsync may not have happened
+            // yet, so sync it here too.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+        match d.parent().filter(|p| !p.as_os_str().is_empty()) {
+            Some(parent) => sync_dir(parent)?,
+            None => sync_dir(Path::new("."))?,
+        }
+    }
+    Ok(())
+}
+
+fn write_atomic(path: &Path, tmp_dir: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().expect("blob paths have a parent");
-    fs::create_dir_all(dir)?;
-    fs::create_dir_all(tmp_dir)?;
+    create_dir_durable(dir)?;
+    if path.exists() {
+        // Immutable: same key, same content. But an earlier attempt may have crashed
+        // between its rename and its fsyncs, so make sure this copy is durable before
+        // reporting it stored.
+        File::open(path)?.sync_all()?;
+        return sync_dir(dir);
+    }
+    create_dir_durable(tmp_dir)?;
     let tmp = tmp_dir.join(format!(
         "{}.{}.{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("blob"),
@@ -111,7 +149,7 @@ fn write_atomic(path: &Path, tmp_dir: &Path, bytes: &[u8]) -> io::Result<()> {
         file.sync_all()?;
         fs::rename(&tmp, path)?;
         // Make the rename itself durable.
-        File::open(dir)?.sync_all()
+        sync_dir(dir)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -160,6 +198,40 @@ mod tests {
             b"original"
         );
         assert!(store.exists(BlobKind::Source, &key).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn missing_ancestors_of_the_root_are_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("not").join("yet").join("there");
+        let store = BlobStore::new(&root);
+        let key = store.put_source(b"x".to_vec(), b"").await.unwrap();
+        assert_eq!(store.get(BlobKind::Source, &key).await.unwrap(), b"x");
+        // A second blob in a new shard, and the same blob again, both succeed.
+        let other = store.put_source(b"y".to_vec(), b"").await.unwrap();
+        assert_eq!(store.get(BlobKind::Source, &other).await.unwrap(), b"y");
+        store.put_source(b"x".to_vec(), b"").await.unwrap();
+    }
+
+    #[test]
+    fn durable_creation_tolerates_existing_and_racing_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("a").join("b");
+        create_dir_durable(&target).unwrap();
+        create_dir_durable(&target).unwrap();
+        assert!(target.is_dir());
+        // Concurrent creators of the same tree all succeed.
+        let deep = dir.path().join("c").join("d").join("e");
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let deep = deep.clone();
+                std::thread::spawn(move || create_dir_durable(&deep))
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        assert!(deep.is_dir());
     }
 
     #[test]
