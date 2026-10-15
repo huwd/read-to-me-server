@@ -4,7 +4,7 @@
 
 use std::future::Future;
 
-use rtm_domain::{FailureCode, Item, ItemId, Millis, Stage, TransitionError, UserId};
+use rtm_domain::{FailureCode, Item, ItemId, Millis, Source, Stage, TransitionError, UserId};
 
 /// A claimed unit of work: run `stage` for `item`. Held under a lease until `lease_until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,15 @@ pub struct Job {
     /// Includes the current attempt, so the first run is attempt 1.
     pub attempt: u32,
     pub lease_until: Millis,
+}
+
+/// What a completed stage produced, recorded in the same transaction that completes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StageOutput {
+    /// The fetch stage's document, already written to the blob store.
+    Source(Source),
+    /// Stages whose outputs aren't recorded yet.
+    Nothing,
 }
 
 /// What happened to a job reported as failed.
@@ -36,6 +45,9 @@ pub enum StoreError {
     LeaseLost,
     #[error(transparent)]
     Transition(#[from] TransitionError),
+    /// A stage reported an output that doesn't belong to it.
+    #[error("stage {stage:?} cannot produce this output")]
+    WrongOutput { stage: Stage },
     #[error("storage: {0}")]
     Storage(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -62,10 +74,12 @@ pub trait ItemRepository: Send + Sync {
 
 /// The durable job queue the pipeline workers pull from (ADR-0003).
 pub trait JobQueue: Send + Sync {
-    /// Lease the next runnable job, picking users round-robin (NFR-S2).
+    /// Lease the next runnable job for one of `stages`, picking users round-robin
+    /// (NFR-S2). Workers name the stages they can run, so other stages wait for theirs.
     fn claim(
         &self,
         worker: &str,
+        stages: &[Stage],
         now: Millis,
         lease_ms: Millis,
     ) -> impl Future<Output = StoreResult<Option<Job>>> + Send;
@@ -79,11 +93,13 @@ pub trait JobQueue: Send + Sync {
         lease_ms: Millis,
     ) -> impl Future<Output = StoreResult<Millis>> + Send;
 
-    /// Record the stage as done: advance the item and queue the next stage, atomically.
+    /// Record the stage as done with its output: advance the item and queue the next
+    /// stage, atomically.
     fn complete(
         &self,
         job: &Job,
         worker: &str,
+        output: StageOutput,
         now: Millis,
     ) -> impl Future<Output = StoreResult<Item>> + Send;
 

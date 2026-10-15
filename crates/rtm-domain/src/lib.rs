@@ -244,6 +244,77 @@ impl fmt::Display for TransitionError {
 
 impl std::error::Error for TransitionError {}
 
+/// The address of an immutable blob: a BLAKE3 hash as 64 lowercase hex characters
+/// (ADR-0008). Never a capability: keys don't appear in public URLs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlobKey(String);
+
+impl BlobKey {
+    pub fn from_hash(hash: [u8; 32]) -> Self {
+        Self(hash.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for BlobKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl FromStr for BlobKey {
+    type Err = UnknownValue;
+    /// Only well-formed keys parse, so a key can safely become a file name.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let valid = s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        valid
+            .then(|| Self(s.to_string()))
+            .ok_or_else(|| UnknownValue(s.to_string()))
+    }
+}
+
+/// What kind of document a source is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceKind {
+    Html,
+    PlainText,
+}
+
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceKind::Html => "html",
+            SourceKind::PlainText => "text",
+        }
+    }
+}
+
+impl FromStr for SourceKind {
+    type Err = UnknownValue;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "html" => Ok(SourceKind::Html),
+            "text" => Ok(SourceKind::PlainText),
+            other => Err(UnknownValue(other.to_string())),
+        }
+    }
+}
+
+/// The fetched document an item is made from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub key: BlobKey,
+    /// Where the document was found, after redirects.
+    pub final_url: String,
+    pub kind: SourceKind,
+    /// The declared character set, if any.
+    pub charset: Option<String>,
+    pub size: u64,
+}
+
 /// A submitted article and where it is in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -252,6 +323,8 @@ pub struct Item {
     pub source_url: String,
     pub state: ItemState,
     pub failure_message: Option<String>,
+    /// Set once the fetch stage completes.
+    pub source: Option<Source>,
     pub created_at: Millis,
     pub updated_at: Millis,
 }
@@ -278,6 +351,22 @@ mod tests {
             assert_eq!(c.as_str().parse::<FailureCode>().unwrap(), c);
         }
         assert!("nonsense".parse::<Stage>().is_err());
+    }
+
+    #[test]
+    fn blob_keys_are_strict_hex() {
+        let key = BlobKey::from_hash([0xab; 32]);
+        assert_eq!(key.as_str(), "ab".repeat(32));
+        assert_eq!(key.as_str().parse::<BlobKey>().unwrap(), key);
+        for bad in [
+            "",
+            "AB".repeat(32).as_str(),
+            "../etc/passwd",
+            &"a".repeat(63),
+            &"g".repeat(64),
+        ] {
+            assert!(bad.parse::<BlobKey>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

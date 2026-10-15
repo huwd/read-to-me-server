@@ -5,8 +5,23 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use rtm_domain::{FailureCode, ItemState, Stage, UserId};
-use rtm_ports::{FailOutcome, ItemRepository, JobQueue, StoreError};
+use rtm_ports::{FailOutcome, ItemRepository, JobQueue, StageOutput, StoreError};
 use rtm_store::{QueuePolicy, Store};
+
+/// A plausible output for completing `job`: fetch records a source; later stages
+/// record nothing yet.
+fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
+    match job.stage {
+        rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
+            key: rtm_domain::BlobKey::from_hash([7; 32]),
+            final_url: "https://example.org/final".into(),
+            kind: rtm_domain::SourceKind::Html,
+            charset: Some("utf-8".into()),
+            size: 42,
+        }),
+        _ => rtm_ports::StageOutput::Nothing,
+    }
+}
 
 const LEASE: i64 = 60_000;
 
@@ -45,7 +60,12 @@ async fn submit_queues_fetch_and_items_are_private() {
     assert_eq!(got, item);
     assert!(db.store.get(&user("bob"), item.id).await.unwrap().is_none());
 
-    let job = db.store.claim("w1", 1_000, LEASE).await.unwrap().unwrap();
+    let job = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 1_000, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (job.item, job.stage, job.attempt),
         (item.id, Stage::Fetch, 1)
@@ -63,14 +83,29 @@ async fn completing_every_stage_publishes_the_item() {
     let mut now = 0;
     for stage in Stage::ALL {
         now += 10;
-        let job = db.store.claim("w1", now, LEASE).await.unwrap().unwrap();
+        let job = db
+            .store
+            .claim("w1", &rtm_domain::Stage::ALL, now, LEASE)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.stage, stage);
-        let after = db.store.complete(&job, "w1", now).await.unwrap();
+        let after = db
+            .store
+            .complete(&job, "w1", output_for(&job), now)
+            .await
+            .unwrap();
         assert_eq!(after.updated_at, now);
     }
     let done = db.store.get(&user("ann"), item.id).await.unwrap().unwrap();
     assert_eq!(done.state, ItemState::Published);
-    assert!(db.store.claim("w1", now, LEASE).await.unwrap().is_none());
+    assert!(
+        db.store
+            .claim("w1", &rtm_domain::Stage::ALL, now, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -80,25 +115,40 @@ async fn a_leased_job_is_not_claimed_twice_until_the_lease_expires() {
         .submit(&user("ann"), "https://example.org/a", 0)
         .await
         .unwrap();
-    let first = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
+    let first = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(
         db.store
-            .claim("w2", LEASE - 1, LEASE)
+            .claim("w2", &rtm_domain::Stage::ALL, LEASE - 1, LEASE)
             .await
             .unwrap()
             .is_none()
     );
 
     // w1 crashed: after the lease expires, w2 gets the job, as attempt 2.
-    let second = db.store.claim("w2", LEASE, LEASE).await.unwrap().unwrap();
+    let second = db
+        .store
+        .claim("w2", &rtm_domain::Stage::ALL, LEASE, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!((second.id, second.attempt), (first.id, 2));
 
     // w1's late result is rejected; w2's is accepted.
     assert!(matches!(
-        db.store.complete(&first, "w1", LEASE + 1).await,
+        db.store
+            .complete(&first, "w1", output_for(&first), LEASE + 1)
+            .await,
         Err(StoreError::LeaseLost)
     ));
-    db.store.complete(&second, "w2", LEASE + 1).await.unwrap();
+    db.store
+        .complete(&second, "w2", output_for(&second), LEASE + 1)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -108,7 +158,12 @@ async fn heartbeat_extends_a_held_lease_only() {
         .submit(&user("ann"), "https://example.org/a", 0)
         .await
         .unwrap();
-    let job = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
+    let job = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
 
     let until = db
         .store
@@ -118,7 +173,7 @@ async fn heartbeat_extends_a_held_lease_only() {
     assert_eq!(until, 2 * LEASE - 1);
     assert!(
         db.store
-            .claim("w2", LEASE + 1, LEASE)
+            .claim("w2", &rtm_domain::Stage::ALL, LEASE + 1, LEASE)
             .await
             .unwrap()
             .is_none()
@@ -150,7 +205,12 @@ async fn retryable_failures_back_off_then_fail_the_item() {
 
     let mut now = 0;
     for attempt in 1..=2 {
-        let job = db.store.claim("w1", now, LEASE).await.unwrap().unwrap();
+        let job = db
+            .store
+            .claim("w1", &rtm_domain::Stage::ALL, now, LEASE)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.attempt, attempt);
         let outcome = db
             .store
@@ -170,7 +230,7 @@ async fn retryable_failures_back_off_then_fail_the_item() {
         // Not runnable before the backoff ends.
         assert!(
             db.store
-                .claim("w1", run_after - 1, LEASE)
+                .claim("w1", &rtm_domain::Stage::ALL, run_after - 1, LEASE)
                 .await
                 .unwrap()
                 .is_none()
@@ -178,7 +238,12 @@ async fn retryable_failures_back_off_then_fail_the_item() {
         now = run_after;
     }
 
-    let job = db.store.claim("w1", now, LEASE).await.unwrap().unwrap();
+    let job = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, now, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(job.attempt, 3);
     let outcome = db
         .store
@@ -198,7 +263,7 @@ async fn retryable_failures_back_off_then_fail_the_item() {
     assert_eq!(failed.failure_message.as_deref(), Some("timed out"));
     assert!(
         db.store
-            .claim("w1", now + 1_000_000, LEASE)
+            .claim("w1", &rtm_domain::Stage::ALL, now + 1_000_000, LEASE)
             .await
             .unwrap()
             .is_none()
@@ -213,7 +278,12 @@ async fn terminal_failures_fail_the_item_at_once() {
         .submit(&user("ann"), "http://10.0.0.1/", 0)
         .await
         .unwrap();
-    let job = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
+    let job = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     let outcome = db
         .store
         .fail(
@@ -250,12 +320,20 @@ async fn a_job_that_keeps_crashing_its_worker_fails_the_item() {
         .unwrap();
 
     // Two leases expire without a result.
-    db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
-    db.store.claim("w2", LEASE, LEASE).await.unwrap().unwrap();
+    db.store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    db.store
+        .claim("w2", &rtm_domain::Stage::ALL, LEASE, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     // The third claim finds it over the limit and fails the item instead.
     assert!(
         db.store
-            .claim("w3", 2 * LEASE, LEASE)
+            .claim("w3", &rtm_domain::Stage::ALL, 2 * LEASE, LEASE)
             .await
             .unwrap()
             .is_none()
@@ -288,7 +366,12 @@ async fn users_take_turns() {
     // Ann submitted first, but Bob is served before Ann's second job.
     let mut order = Vec::new();
     for now in 100..104 {
-        let job = db.store.claim("w1", now, LEASE).await.unwrap().unwrap();
+        let job = db
+            .store
+            .claim("w1", &rtm_domain::Stage::ALL, now, LEASE)
+            .await
+            .unwrap()
+            .unwrap();
         order.push(job.user.0);
     }
     assert_eq!(order, ["ann", "bob", "ann", "ann"]);
@@ -311,7 +394,11 @@ async fn concurrent_claims_never_hand_out_the_same_job() {
         tasks.push(tokio::spawn(async move {
             let worker = format!("w{w}");
             let mut mine = Vec::new();
-            while let Some(job) = store.claim(&worker, 1, LEASE).await.unwrap() {
+            while let Some(job) = store
+                .claim(&worker, &rtm_domain::Stage::ALL, 1, LEASE)
+                .await
+                .unwrap()
+            {
                 mine.push(job.id);
             }
             mine
@@ -339,7 +426,13 @@ async fn data_survives_reopening() {
     };
     let store = Store::open(&path, QueuePolicy::default()).await.unwrap();
     assert_eq!(store.get(&user("ann"), item.id).await.unwrap(), Some(item));
-    assert!(store.claim("w1", 0, LEASE).await.unwrap().is_some());
+    assert!(
+        store
+            .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]
@@ -370,8 +463,18 @@ async fn a_stale_attempt_cannot_touch_the_same_workers_new_lease() {
         .submit(&user("ann"), "https://example.org/a", 0)
         .await
         .unwrap();
-    let first = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
-    let second = db.store.claim("w1", LEASE, LEASE).await.unwrap().unwrap();
+    let first = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    let second = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, LEASE, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!((first.id, first.attempt, second.attempt), (second.id, 1, 2));
 
     let now = LEASE + 1;
@@ -398,19 +501,25 @@ async fn a_stale_attempt_cannot_touch_the_same_workers_new_lease() {
         Err(StoreError::LeaseLost)
     ));
     assert!(matches!(
-        db.store.complete(&first, "w1", now).await,
+        db.store
+            .complete(&first, "w1", output_for(&first), now)
+            .await,
         Err(StoreError::LeaseLost)
     ));
 
     // The live attempt is untouched: still leased until its original expiry.
     assert!(
         db.store
-            .claim("w2", 2 * LEASE - 1, LEASE)
+            .claim("w2", &rtm_domain::Stage::ALL, 2 * LEASE - 1, LEASE)
             .await
             .unwrap()
             .is_none()
     );
-    let after = db.store.complete(&second, "w1", now).await.unwrap();
+    let after = db
+        .store
+        .complete(&second, "w1", output_for(&second), now)
+        .await
+        .unwrap();
     assert_eq!(after.id, item.id);
     assert_eq!(
         after.state,
@@ -429,9 +538,22 @@ async fn a_stale_job_cannot_touch_a_new_job_that_reuses_its_id() {
         .submit(&user("ann"), "https://example.org/a", 0)
         .await
         .unwrap();
-    let fetch = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
-    db.store.complete(&fetch, "w1", 1).await.unwrap();
-    let extract = db.store.claim("w1", 2, LEASE).await.unwrap().unwrap();
+    let fetch = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 0, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    db.store
+        .complete(&fetch, "w1", output_for(&fetch), 1)
+        .await
+        .unwrap();
+    let extract = db
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, 2, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(extract.stage, Stage::Extract);
     assert_eq!(
         extract.id, fetch.id,
@@ -450,14 +572,14 @@ async fn a_stale_job_cannot_touch_a_new_job_that_reuses_its_id() {
         Err(StoreError::LeaseLost)
     ));
     assert!(matches!(
-        db.store.complete(&fetch, "w1", 3).await,
+        db.store.complete(&fetch, "w1", output_for(&fetch), 3).await,
         Err(StoreError::LeaseLost)
     ));
 
     // The extract job kept its lease (no retry, no extension) and completes normally.
     assert!(
         db.store
-            .claim("w2", LEASE + 1, LEASE)
+            .claim("w2", &rtm_domain::Stage::ALL, LEASE + 1, LEASE)
             .await
             .unwrap()
             .is_none()
@@ -466,7 +588,10 @@ async fn a_stale_job_cannot_touch_a_new_job_that_reuses_its_id() {
         db.store.heartbeat(&extract, "w1", 4, LEASE).await.unwrap(),
         4 + LEASE
     );
-    db.store.complete(&extract, "w1", 5).await.unwrap();
+    db.store
+        .complete(&extract, "w1", output_for(&extract), 5)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -486,7 +611,12 @@ async fn users_take_turns_even_within_one_millisecond() {
     }
     let mut order = Vec::new();
     for _ in 0..6 {
-        let job = db.store.claim("w1", 100, LEASE).await.unwrap().unwrap();
+        let job = db
+            .store
+            .claim("w1", &rtm_domain::Stage::ALL, 100, LEASE)
+            .await
+            .unwrap()
+            .unwrap();
         order.push(job.user.0);
     }
     assert_eq!(order, ["ann", "bob", "ann", "bob", "ann", "bob"]);
@@ -521,9 +651,153 @@ async fn a_database_from_the_first_schema_upgrades() {
         .unwrap();
     // Bob has never had a turn, so goes before Ann; then Ann's turn follows on.
     let order: Vec<String> = [
-        store.claim("w1", 10, LEASE).await.unwrap().unwrap().user.0,
-        store.claim("w1", 10, LEASE).await.unwrap().unwrap().user.0,
+        store
+            .claim("w1", &rtm_domain::Stage::ALL, 10, LEASE)
+            .await
+            .unwrap()
+            .unwrap()
+            .user
+            .0,
+        store
+            .claim("w1", &rtm_domain::Stage::ALL, 10, LEASE)
+            .await
+            .unwrap()
+            .unwrap()
+            .user
+            .0,
     ]
     .into();
     assert_eq!(order, ["bob", "ann"]);
+}
+
+#[tokio::test]
+async fn workers_claim_only_the_stages_they_run() {
+    let db = db().await;
+    db.store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    // Nothing for an extract-only worker while the item waits on fetch.
+    assert!(
+        db.store
+            .claim("x", &[Stage::Extract], 1, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let fetch = db
+        .store
+        .claim("f", &[Stage::Fetch], 1, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    db.store
+        .complete(&fetch, "f", output_for(&fetch), 2)
+        .await
+        .unwrap();
+    // Now the fetch worker has nothing, and the extract worker does.
+    assert!(
+        db.store
+            .claim("f", &[Stage::Fetch], 3, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let extract = db
+        .store
+        .claim("x", &[Stage::Extract], 3, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(extract.stage, Stage::Extract);
+    assert!(
+        db.store
+            .claim("none", &[], 3, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn completing_fetch_records_the_source() {
+    let db = db().await;
+    let item = db
+        .store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    assert_eq!(item.source, None);
+    let job = db
+        .store
+        .claim("w1", &[Stage::Fetch], 1, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    let after = db
+        .store
+        .complete(&job, "w1", output_for(&job), 2)
+        .await
+        .unwrap();
+
+    let StageOutput::Source(expected) = output_for(&job) else {
+        unreachable!()
+    };
+    assert_eq!(after.source.as_ref(), Some(&expected));
+    let stored = db.store.get(&user("ann"), item.id).await.unwrap().unwrap();
+    assert_eq!(stored.source, Some(expected));
+    assert_eq!(
+        stored.state,
+        ItemState::Pending {
+            next: Stage::Extract
+        }
+    );
+}
+
+#[tokio::test]
+async fn stages_cannot_record_outputs_that_are_not_theirs() {
+    let db = db().await;
+    let item = db
+        .store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    let fetch = db
+        .store
+        .claim("w1", &[Stage::Fetch], 1, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    // Fetch must record a source.
+    assert!(matches!(
+        db.store
+            .complete(&fetch, "w1", StageOutput::Nothing, 2)
+            .await,
+        Err(StoreError::WrongOutput {
+            stage: Stage::Fetch
+        })
+    ));
+    // Rejected before any change: the lease is still held and the item unchanged.
+    let unchanged = db.store.get(&user("ann"), item.id).await.unwrap().unwrap();
+    assert_eq!(unchanged.state, ItemState::Pending { next: Stage::Fetch });
+    db.store
+        .complete(&fetch, "w1", output_for(&fetch), 2)
+        .await
+        .unwrap();
+
+    // Only fetch may record a source.
+    let extract = db
+        .store
+        .claim("w1", &[Stage::Extract], 3, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        db.store
+            .complete(&extract, "w1", output_for(&fetch), 4)
+            .await,
+        Err(StoreError::WrongOutput {
+            stage: Stage::Extract
+        })
+    ));
 }

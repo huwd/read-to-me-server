@@ -9,6 +9,21 @@ use common::{App, Reply, TOKEN, app};
 use rtm_domain::Stage;
 use rtm_ports::JobQueue;
 
+/// A plausible output for completing `job`: fetch records a source; later stages
+/// record nothing yet.
+fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
+    match job.stage {
+        rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
+            key: rtm_domain::BlobKey::from_hash([7; 32]),
+            final_url: "https://example.org/final".into(),
+            kind: rtm_domain::SourceKind::Html,
+            charset: Some("utf-8".into()),
+            size: 42,
+        }),
+        _ => rtm_ports::StageOutput::Nothing,
+    }
+}
+
 fn post(body: &str, token: Option<&str>) -> Request<Body> {
     let mut req = Request::post("/v1/items").header(header::CONTENT_TYPE, "application/json");
     if let Some(token) = token {
@@ -56,7 +71,7 @@ async fn submitting_a_url_queues_an_item() {
     // The item's first job is on the queue.
     let job = app
         .store
-        .claim("w1", i64::MAX / 2, 1_000)
+        .claim("w1", &rtm_domain::Stage::ALL, i64::MAX / 2, 1_000)
         .await
         .unwrap()
         .unwrap();
@@ -81,14 +96,27 @@ async fn status_reflects_the_pipeline() {
     assert!(reply.json.get("failure").is_none());
 
     let now = i64::MAX / 2;
-    let job = app.store.claim("w1", now, 1_000).await.unwrap().unwrap();
-    app.store.complete(&job, "w1", now).await.unwrap();
+    let job = app
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, now, 1_000)
+        .await
+        .unwrap()
+        .unwrap();
+    app.store
+        .complete(&job, "w1", output_for(&job), now)
+        .await
+        .unwrap();
     assert_eq!(
         app.send(get(&path, Some(TOKEN))).await.json["status"],
         "extracting"
     );
 
-    let job = app.store.claim("w1", now, 1_000).await.unwrap().unwrap();
+    let job = app
+        .store
+        .claim("w1", &rtm_domain::Stage::ALL, now, 1_000)
+        .await
+        .unwrap()
+        .unwrap();
     app.store
         .fail(
             &job,
@@ -214,7 +242,7 @@ async fn invalid_urls_are_rejected() {
     // Nothing reached the queue.
     assert!(
         app.store
-            .claim("w1", i64::MAX / 2, 1_000)
+            .claim("w1", &rtm_domain::Stage::ALL, i64::MAX / 2, 1_000)
             .await
             .unwrap()
             .is_none()
