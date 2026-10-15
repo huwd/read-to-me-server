@@ -1864,8 +1864,12 @@ dependencies = [
 name = "rtm-bin"
 version = "0.1.0"
 dependencies = [
+ "ipnet",
  "rtm-api",
+ "rtm-blobs",
  "rtm-domain",
+ "rtm-fetch",
+ "rtm-pipeline",
  "rtm-store",
  "tokio",
  "tracing",

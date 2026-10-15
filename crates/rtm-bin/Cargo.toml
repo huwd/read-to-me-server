@@ -15,8 +15,12 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+ipnet = "2.12.2"
 rtm-api = { version = "0.1.0", path = "../rtm-api" }
+rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
 rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+rtm-fetch = { version = "0.1.0", path = "../rtm-fetch" }
+rtm-pipeline = { version = "0.1.0", path = "../rtm-pipeline" }
 rtm-store = { version = "0.1.0", path = "../rtm-store" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tracing = "0.1.44"
