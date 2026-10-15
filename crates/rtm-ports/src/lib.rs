@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Ports: the interfaces between read-to-me's domain and its adapters. Stages and the API
+//! depend on these traits, not on SQLite.
+
+use std::future::Future;
+
+use rtm_domain::{FailureCode, Item, ItemId, Millis, Stage, TransitionError, UserId};
+
+/// A claimed unit of work: run `stage` for `item`. Held under a lease until `lease_until`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Job {
+    pub id: i64,
+    pub item: ItemId,
+    pub user: UserId,
+    pub stage: Stage,
+    /// Includes the current attempt, so the first run is attempt 1.
+    pub attempt: u32,
+    pub lease_until: Millis,
+}
+
+/// What happened to a job reported as failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailOutcome {
+    /// Requeued to run again no earlier than `run_after`.
+    Retrying { run_after: Millis },
+    /// The item has failed terminally.
+    Failed,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("not found")]
+    NotFound,
+    /// The worker's lease expired and the job was reclaimed (or finished) elsewhere.
+    #[error("lease lost")]
+    LeaseLost,
+    #[error(transparent)]
+    Transition(#[from] TransitionError),
+    #[error("storage: {0}")]
+    Storage(Box<dyn std::error::Error + Send + Sync>),
+}
+
+pub type StoreResult<T> = Result<T, StoreError>;
+
+/// Items as seen by the API.
+pub trait ItemRepository: Send + Sync {
+    /// Record a new item and queue its first stage, atomically.
+    fn submit(
+        &self,
+        user: &UserId,
+        source_url: &str,
+        now: Millis,
+    ) -> impl Future<Output = StoreResult<Item>> + Send;
+
+    /// An item, only if `user` owns it.
+    fn get(
+        &self,
+        user: &UserId,
+        id: ItemId,
+    ) -> impl Future<Output = StoreResult<Option<Item>>> + Send;
+}
+
+/// The durable job queue the pipeline workers pull from (ADR-0003).
+pub trait JobQueue: Send + Sync {
+    /// Lease the next runnable job, picking users round-robin (NFR-S2).
+    fn claim(
+        &self,
+        worker: &str,
+        now: Millis,
+        lease_ms: Millis,
+    ) -> impl Future<Output = StoreResult<Option<Job>>> + Send;
+
+    /// Extend a lease the worker still holds.
+    fn heartbeat(
+        &self,
+        job: &Job,
+        worker: &str,
+        now: Millis,
+        lease_ms: Millis,
+    ) -> impl Future<Output = StoreResult<Millis>> + Send;
+
+    /// Record the stage as done: advance the item and queue the next stage, atomically.
+    fn complete(
+        &self,
+        job: &Job,
+        worker: &str,
+        now: Millis,
+    ) -> impl Future<Output = StoreResult<Item>> + Send;
+
+    /// Record a failure: retry with backoff if `code` is retryable and attempts remain,
+    /// otherwise fail the item.
+    fn fail(
+        &self,
+        job: &Job,
+        worker: &str,
+        code: FailureCode,
+        message: &str,
+        now: Millis,
+    ) -> impl Future<Output = StoreResult<FailOutcome>> + Send;
+}
