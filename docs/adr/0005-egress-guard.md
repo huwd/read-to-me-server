@@ -31,7 +31,7 @@ All outbound HTTP (articles, robots.txt, and any future images or favicons) goes
 6. **Limits:**
    - connect 5 s, total 30 s;
    - body 10 MB for HTML (PDF limits come with upload);
-   - streaming decompression with a ratio cap of 10× and an absolute cap;
+   - streaming decompression with a ratio cap of 10× and an absolute cap (the ratio cap is dropped by [Amendment 1](#amendment-1-2026-10-15-no-separate-decompression-ratio-limit));
    - header size cap;
    - `Content-Type` allow-list, reconciled with sniffing.
 7. **No ambient credentials:** no cookies, no auth headers, no proxy credentials, honest User-Agent (`read-to-me/<version> (+<project URL>)`).
@@ -62,3 +62,18 @@ All outbound HTTP (articles, robots.txt, and any future images or favicons) goes
 - One small, heavily tested choke point for all outbound traffic.
 - Some legitimate sites on non-standard ports, or reachable only over private networks (e.g. an intranet), are blocked by default; an explicit unsafe allow-list exists for self-hosters who need it.
 - Every future feature that fetches anything must use `SafeFetcher`; enforced by lint rules.
+
+## Amendment 1 (2026-10-15): no separate decompression ratio limit
+
+Implementing the guard ([PR #31](https://github.com/huwd/read-to-me-server/pull/31)) showed the 10× ratio cap in step 6 costs more than it protects.
+
+**Decision:** the body limit (10 MB for HTML) is measured on the **decompressed** bytes as they stream in, and there is no separate ratio limit. [FR-FET-03](../01-product-spec.md#fr-fet-03) and [doc 06 §3.2](../06-security-and-pentest.md#32-parsing--processing-untrusted-content) are updated to match.
+
+**Why:**
+- **The absolute limit already stops bombs.** Decompression stops at 10 MB, so a bomb costs milliseconds and at most 10 MB of memory per fetch.
+- **10× would reject real articles.** Ordinary HTML compresses 5–10× with gzip and more with brotli, and pages that embed large JSON (framework state, inline SVG) regularly exceed 10×. A ratio safe for real pages (50–100×) adds almost nothing on top of a 10 MB limit.
+- **It would complicate the guard.** The HTTP client decompresses transparently and never sees compressed byte counts. Counting them means running the gzip, brotli and deflate decoders ourselves, inside the most security-sensitive component.
+
+**Consequences:**
+- The compression ratio is still worth observing where it can be measured cheaply: from the declared `Content-Length` (compressed bytes) against the decompressed size. A histogram and a security event for extreme ratios (over 100×) are added with the metrics work ([#26](https://github.com/huwd/read-to-me-server/issues/26)); they record, they don't fail fetches.
+- **Revisit when the limit rises.** PDF upload ([FR-SUB-04](../01-product-spec.md#fr-sub-04)) brings a 50 MB limit. That is the point at which a ratio limit would bound expansion meaningfully, so reconsider it then.
