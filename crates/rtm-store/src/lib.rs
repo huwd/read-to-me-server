@@ -192,17 +192,38 @@ async fn save_state(
     Ok(())
 }
 
-/// Remove a job, but only while `worker` still holds its lease.
+/// Matches the job row only while this exact lease is live: the same job (its ID may be
+/// reused once deleted, so item and stage too), the same attempt (the same worker may
+/// have reclaimed it after its lease expired), the same worker, and not yet expired.
+/// Binds `?1`–`?6`; see [`bind_lease`].
+macro_rules! lease_held {
+    () => {
+        "id = ?1 AND item_id = ?2 AND stage = ?3 AND attempts = ?4 AND locked_by = ?5 \
+         AND locked_until > ?6"
+    };
+}
+
+type Query<'q> = sqlx::query::Query<'q, Sqlite, sqlx::sqlite::SqliteArguments>;
+
+fn bind_lease<'q>(query: Query<'q>, job: &Job, worker: &str, now: Millis) -> Query<'q> {
+    query
+        .bind(job.id)
+        .bind(job.item.to_string())
+        .bind(job.stage.as_str())
+        .bind(i64::from(job.attempt))
+        .bind(worker.to_string())
+        .bind(now)
+}
+
+/// Remove a job, but only while `worker` still holds this lease on it.
 async fn take_job(
     tx: &mut Transaction<'_, Sqlite>,
     job: &Job,
     worker: &str,
     now: Millis,
 ) -> StoreResult<()> {
-    let done = sqlx::query("DELETE FROM jobs WHERE id = ? AND locked_by = ? AND locked_until > ?")
-        .bind(job.id)
-        .bind(worker)
-        .bind(now)
+    let query = sqlx::query(concat!("DELETE FROM jobs WHERE ", lease_held!()));
+    let done = bind_lease(query, job, worker, now)
         .execute(&mut **tx)
         .await
         .map_err(storage)?;
@@ -337,16 +358,15 @@ impl JobQueue for Store {
         lease_ms: Millis,
     ) -> StoreResult<Millis> {
         let until = now + lease_ms;
-        let done = sqlx::query(
-            "UPDATE jobs SET locked_until = ? WHERE id = ? AND locked_by = ? AND locked_until > ?",
-        )
-        .bind(until)
-        .bind(job.id)
-        .bind(worker)
-        .bind(now)
-        .execute(&self.write)
-        .await
-        .map_err(storage)?;
+        let query = sqlx::query(concat!(
+            "UPDATE jobs SET locked_until = ?7 WHERE ",
+            lease_held!()
+        ));
+        let done = bind_lease(query, job, worker, now)
+            .bind(until)
+            .execute(&self.write)
+            .await
+            .map_err(storage)?;
         if done.rows_affected() == 1 {
             Ok(until)
         } else {
@@ -385,18 +405,17 @@ impl JobQueue for Store {
                     h.wrapping_mul(31).wrapping_add(b as u64)
                 });
             let run_after = now + self.policy.backoff(job.attempt, seed);
-            let done = sqlx::query(
-                "UPDATE jobs SET run_after = ?, locked_by = NULL, locked_until = NULL, \
-                 last_error = ? WHERE id = ? AND locked_by = ? AND locked_until > ?",
-            )
-            .bind(run_after)
-            .bind(format!("{}: {message}", code.as_str()))
-            .bind(job.id)
-            .bind(worker)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(storage)?;
+            let query = sqlx::query(concat!(
+                "UPDATE jobs SET run_after = ?7, locked_by = NULL, locked_until = NULL, \
+                 last_error = ?8 WHERE ",
+                lease_held!()
+            ));
+            let done = bind_lease(query, job, worker, now)
+                .bind(run_after)
+                .bind(format!("{}: {message}", code.as_str()))
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
             if done.rows_affected() != 1 {
                 return Err(StoreError::LeaseLost);
             }

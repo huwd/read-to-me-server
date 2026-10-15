@@ -359,3 +359,112 @@ fn backoff_grows_and_is_capped() {
         }
     }
 }
+
+/// A worker can reclaim its own job after its lease expired (it was slow, not dead). Its
+/// first attempt must then be fenced off from the second.
+#[tokio::test]
+async fn a_stale_attempt_cannot_touch_the_same_workers_new_lease() {
+    let db = db().await;
+    let item = db
+        .store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    let first = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
+    let second = db.store.claim("w1", LEASE, LEASE).await.unwrap().unwrap();
+    assert_eq!((first.id, first.attempt, second.attempt), (second.id, 1, 2));
+
+    let now = LEASE + 1;
+    assert!(matches!(
+        db.store.heartbeat(&first, "w1", now, LEASE).await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        db.store
+            .fail(&first, "w1", FailureCode::FetchFailed, "stale", now)
+            .await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        db.store
+            .fail(
+                &first,
+                "w1",
+                FailureCode::DestinationNotAllowed,
+                "stale",
+                now
+            )
+            .await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        db.store.complete(&first, "w1", now).await,
+        Err(StoreError::LeaseLost)
+    ));
+
+    // The live attempt is untouched: still leased until its original expiry.
+    assert!(
+        db.store
+            .claim("w2", 2 * LEASE - 1, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let after = db.store.complete(&second, "w1", now).await.unwrap();
+    assert_eq!(after.id, item.id);
+    assert_eq!(
+        after.state,
+        ItemState::Pending {
+            next: Stage::Extract
+        }
+    );
+}
+
+/// SQLite reuses the highest rowid after a delete, so the next stage's job often gets
+/// the ID of the job just completed. A late call holding the old job must not act on it.
+#[tokio::test]
+async fn a_stale_job_cannot_touch_a_new_job_that_reuses_its_id() {
+    let db = db().await;
+    db.store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    let fetch = db.store.claim("w1", 0, LEASE).await.unwrap().unwrap();
+    db.store.complete(&fetch, "w1", 1).await.unwrap();
+    let extract = db.store.claim("w1", 2, LEASE).await.unwrap().unwrap();
+    assert_eq!(extract.stage, Stage::Extract);
+    assert_eq!(
+        extract.id, fetch.id,
+        "precondition: SQLite reused the job ID"
+    );
+    assert_eq!(extract.attempt, fetch.attempt);
+
+    assert!(matches!(
+        db.store.heartbeat(&fetch, "w1", 3, LEASE).await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        db.store
+            .fail(&fetch, "w1", FailureCode::FetchFailed, "stale", 3)
+            .await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        db.store.complete(&fetch, "w1", 3).await,
+        Err(StoreError::LeaseLost)
+    ));
+
+    // The extract job kept its lease (no retry, no extension) and completes normally.
+    assert!(
+        db.store
+            .claim("w2", LEASE + 1, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        db.store.heartbeat(&extract, "w1", 4, LEASE).await.unwrap(),
+        4 + LEASE
+    );
+    db.store.complete(&extract, "w1", 5).await.unwrap();
+}
