@@ -1,0 +1,18 @@
+[package]
+name = "rtm-fetch"
+version = "0.1.0"
+description = "The egress guard: the only way read-to-me makes outbound HTTP requests (ADR-0005)."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ipnet = "2.12.2"
+url = "2.5.8"
+
+[dev-dependencies]
+proptest = "1.12.0"
