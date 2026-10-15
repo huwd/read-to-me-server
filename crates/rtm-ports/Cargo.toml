@@ -1,0 +1,15 @@
+[package]
+name = "rtm-ports"
+version = "0.1.0"
+description = "Interfaces (ports) between read-to-me's domain and its adapters."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+thiserror = "2.0.21"
