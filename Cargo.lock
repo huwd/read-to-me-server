@@ -1910,6 +1910,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtm-pipeline"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "rtm-blobs",
+ "rtm-domain",
+ "rtm-fetch",
+ "rtm-ports",
+ "rtm-store",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "rtm-ports"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,26 @@
+[package]
+name = "rtm-pipeline"
+version = "0.1.0"
+description = "read-to-me's pipeline workers and stages."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
+rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+rtm-fetch = { version = "0.1.0", path = "../rtm-fetch" }
+rtm-ports = { version = "0.1.0", path = "../rtm-ports" }
+tokio = { version = "1.53.3", features = ["time", "sync", "macros"] }
+tracing = "0.1.44"
+url = "2.5.8"
+
+[dev-dependencies]
+axum = "0.8.9"
+rtm-store = { version = "0.1.0", path = "../rtm-store" }
+tempfile = "3.27.0"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net"] }
