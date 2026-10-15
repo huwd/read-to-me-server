@@ -117,6 +117,8 @@ async fn unknown_and_malformed_ids_are_404() {
     for path in [
         "/v1/items/0190a7c4-0000-7000-8000-000000000000",
         "/v1/items/not-an-id",
+        "/v1/items/%FF",
+        "/v1/items/%00",
     ] {
         assert_problem(
             &app.send(get(path, Some(TOKEN))).await,
