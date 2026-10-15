@@ -11,8 +11,19 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+bytes = "1.12.1"
+hickory-resolver = "0.26.3"
 ipnet = "2.12.2"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip", "brotli", "deflate", "http2", "charset"] }
+rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+texting_robots = "0.2.2"
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["time", "sync"] }
+tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
+flate2 = "1.1.10"
 proptest = "1.12.0"
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
