@@ -102,6 +102,11 @@ pub enum FailureCode {
     RobotsDisallowed,
     SourceTooLarge,
     UnsupportedContentType,
+    /// The page answered, but not with the article: not found, gone, forbidden, or a
+    /// redirect loop. Retrying won't help.
+    SourceUnavailable,
+    /// The page couldn't be reached right now: network errors, timeouts, server errors,
+    /// rate limiting, or an unreachable robots.txt.
     FetchFailed,
     ExtractionLowConfidence,
     ExtractionTruncated,
@@ -112,11 +117,12 @@ pub enum FailureCode {
 }
 
 impl FailureCode {
-    pub const ALL: [FailureCode; 11] = [
+    pub const ALL: [FailureCode; 12] = [
         FailureCode::DestinationNotAllowed,
         FailureCode::RobotsDisallowed,
         FailureCode::SourceTooLarge,
         FailureCode::UnsupportedContentType,
+        FailureCode::SourceUnavailable,
         FailureCode::FetchFailed,
         FailureCode::ExtractionLowConfidence,
         FailureCode::ExtractionTruncated,
@@ -132,6 +138,7 @@ impl FailureCode {
             FailureCode::RobotsDisallowed => "ROBOTS_DISALLOWED",
             FailureCode::SourceTooLarge => "SOURCE_TOO_LARGE",
             FailureCode::UnsupportedContentType => "UNSUPPORTED_CONTENT_TYPE",
+            FailureCode::SourceUnavailable => "SOURCE_UNAVAILABLE",
             FailureCode::FetchFailed => "FETCH_FAILED",
             FailureCode::ExtractionLowConfidence => "EXTRACTION_LOW_CONFIDENCE",
             FailureCode::ExtractionTruncated => "EXTRACTION_TRUNCATED",
