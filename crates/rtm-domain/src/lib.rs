@@ -1,0 +1,283 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Pure domain types for read-to-me: items, the pipeline stages they pass through, and the
+//! state machine that governs them (docs/03 §5). No I/O.
+
+use std::fmt;
+use std::str::FromStr;
+
+/// Milliseconds since the Unix epoch. Passed in explicitly so time-dependent behaviour
+/// (leases, backoff) is deterministic in tests.
+pub type Millis = i64;
+
+/// An item's identifier: a UUIDv7, so IDs sort by creation time. Never relied on for secrecy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ItemId(uuid::Uuid);
+
+impl ItemId {
+    pub fn new() -> Self {
+        Self(uuid::Uuid::now_v7())
+    }
+}
+
+impl Default for ItemId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for ItemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for ItemId {
+    type Err = uuid::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        uuid::Uuid::parse_str(s).map(Self)
+    }
+}
+
+/// The owner of an item. Opaque here; maps to an OIDC (`iss`, `sub`) pair elsewhere (ADR-0004).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct UserId(pub String);
+
+/// Pipeline stages, in order. Completing the last one publishes the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Stage {
+    Fetch,
+    Extract,
+    Script,
+    Synthesise,
+    Encode,
+    Publish,
+}
+
+impl Stage {
+    pub const ALL: [Stage; 6] = [
+        Stage::Fetch,
+        Stage::Extract,
+        Stage::Script,
+        Stage::Synthesise,
+        Stage::Encode,
+        Stage::Publish,
+    ];
+
+    /// The stage after this one, or `None` after `Publish`.
+    pub fn next(self) -> Option<Stage> {
+        let i = Self::ALL
+            .iter()
+            .position(|s| *s == self)
+            .expect("stage in ALL");
+        Self::ALL.get(i + 1).copied()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stage::Fetch => "fetch",
+            Stage::Extract => "extract",
+            Stage::Script => "script",
+            Stage::Synthesise => "synthesise",
+            Stage::Encode => "encode",
+            Stage::Publish => "publish",
+        }
+    }
+}
+
+impl FromStr for Stage {
+    type Err = UnknownValue;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|st| st.as_str() == s)
+            .ok_or_else(|| UnknownValue(s.to_string()))
+    }
+}
+
+/// Why an item failed. User-attributable codes are terminal; others may be retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FailureCode {
+    DestinationNotAllowed,
+    RobotsDisallowed,
+    SourceTooLarge,
+    UnsupportedContentType,
+    FetchFailed,
+    ExtractionLowConfidence,
+    ExtractionTruncated,
+    TooLong,
+    LanguageUnsupported,
+    EngineUnavailable,
+    Internal,
+}
+
+impl FailureCode {
+    pub const ALL: [FailureCode; 11] = [
+        FailureCode::DestinationNotAllowed,
+        FailureCode::RobotsDisallowed,
+        FailureCode::SourceTooLarge,
+        FailureCode::UnsupportedContentType,
+        FailureCode::FetchFailed,
+        FailureCode::ExtractionLowConfidence,
+        FailureCode::ExtractionTruncated,
+        FailureCode::TooLong,
+        FailureCode::LanguageUnsupported,
+        FailureCode::EngineUnavailable,
+        FailureCode::Internal,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailureCode::DestinationNotAllowed => "DESTINATION_NOT_ALLOWED",
+            FailureCode::RobotsDisallowed => "ROBOTS_DISALLOWED",
+            FailureCode::SourceTooLarge => "SOURCE_TOO_LARGE",
+            FailureCode::UnsupportedContentType => "UNSUPPORTED_CONTENT_TYPE",
+            FailureCode::FetchFailed => "FETCH_FAILED",
+            FailureCode::ExtractionLowConfidence => "EXTRACTION_LOW_CONFIDENCE",
+            FailureCode::ExtractionTruncated => "EXTRACTION_TRUNCATED",
+            FailureCode::TooLong => "TOO_LONG",
+            FailureCode::LanguageUnsupported => "LANGUAGE_UNSUPPORTED",
+            FailureCode::EngineUnavailable => "ENGINE_UNAVAILABLE",
+            FailureCode::Internal => "INTERNAL",
+        }
+    }
+
+    /// Transient failures are worth retrying with backoff; the rest fail the item at once.
+    pub fn retryable(self) -> bool {
+        matches!(
+            self,
+            FailureCode::FetchFailed | FailureCode::EngineUnavailable | FailureCode::Internal
+        )
+    }
+}
+
+impl FromStr for FailureCode {
+    type Err = UnknownValue;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|c| c.as_str() == s)
+            .ok_or_else(|| UnknownValue(s.to_string()))
+    }
+}
+
+/// A stored value that doesn't match any known variant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownValue(pub String);
+
+impl fmt::Display for UnknownValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown value {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownValue {}
+
+/// Where an item is in its lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemState {
+    /// Waiting for (or running) `next`.
+    Pending {
+        next: Stage,
+    },
+    Published,
+    Failed {
+        stage: Stage,
+        code: FailureCode,
+    },
+}
+
+impl ItemState {
+    /// A newly submitted item.
+    pub fn submitted() -> Self {
+        ItemState::Pending { next: Stage::Fetch }
+    }
+
+    /// Record `stage` as completed. Only the stage the item is waiting for can complete.
+    pub fn complete(self, stage: Stage) -> Result<ItemState, TransitionError> {
+        match self {
+            ItemState::Pending { next } if next == stage => Ok(match stage.next() {
+                Some(next) => ItemState::Pending { next },
+                None => ItemState::Published,
+            }),
+            other => Err(TransitionError { from: other, stage }),
+        }
+    }
+
+    /// Record `stage` as failed terminally. Only the stage the item is waiting for can fail.
+    pub fn fail(self, stage: Stage, code: FailureCode) -> Result<ItemState, TransitionError> {
+        match self {
+            ItemState::Pending { next } if next == stage => Ok(ItemState::Failed { stage, code }),
+            other => Err(TransitionError { from: other, stage }),
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, ItemState::Pending { .. })
+    }
+}
+
+/// An attempted transition the state machine does not allow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransitionError {
+    pub from: ItemState,
+    pub stage: Stage,
+}
+
+impl fmt::Display for TransitionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "stage {:?} cannot change an item in state {:?}",
+            self.stage, self.from
+        )
+    }
+}
+
+impl std::error::Error for TransitionError {}
+
+/// A submitted article and where it is in the pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub id: ItemId,
+    pub user: UserId,
+    pub source_url: String,
+    pub state: ItemState,
+    pub failure_message: Option<String>,
+    pub created_at: Millis,
+    pub updated_at: Millis,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn happy_path_publishes_after_every_stage_in_order() {
+        let mut state = ItemState::submitted();
+        for stage in Stage::ALL {
+            state = state.complete(stage).unwrap();
+        }
+        assert_eq!(state, ItemState::Published);
+    }
+
+    #[test]
+    fn codes_and_stages_round_trip_through_strings() {
+        for s in Stage::ALL {
+            assert_eq!(s.as_str().parse::<Stage>().unwrap(), s);
+        }
+        for c in FailureCode::ALL {
+            assert_eq!(c.as_str().parse::<FailureCode>().unwrap(), c);
+        }
+        assert!("nonsense".parse::<Stage>().is_err());
+    }
+
+    #[test]
+    fn item_ids_sort_by_creation() {
+        let a = ItemId::new();
+        let b = ItemId::new();
+        assert!(a < b);
+        assert_eq!(a.to_string().parse::<ItemId>().unwrap(), a);
+    }
+}
