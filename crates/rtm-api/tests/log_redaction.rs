@@ -6,13 +6,13 @@
 //! callsite is enabled, so a thread-local subscriber racing with parallel tests in the
 //! same process can miss events and make the assertion meaningless.
 
+mod common;
+
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::Request;
-use http_body_util::BodyExt;
-use tower::ServiceExt;
 
 #[derive(Clone, Default)]
 struct Buf(Arc<Mutex<Vec<u8>>>);
@@ -27,12 +27,12 @@ impl Write for Buf {
     }
 }
 
-async fn request(path: &str) {
-    let response = rtm_api::router()
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
-        .await
+async fn request(app: &common::App, path: &str) {
+    let request = Request::get(path)
+        .header("authorization", format!("Bearer {}", common::TOKEN))
+        .body(Body::empty())
         .unwrap();
-    response.into_body().collect().await.unwrap();
+    app.send(request).await;
 }
 
 #[tokio::test]
@@ -46,11 +46,31 @@ async fn request_logs_never_contain_paths_or_queries() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    request("/healthz?token=rtm_pat_SECRET").await;
-    request("/feeds/rtm_feed_SECRET.xml").await;
+    let app = common::app().await;
+    let item = rtm_api::items::validate_url("https://example.org/SECRET-article").unwrap();
+    let item = rtm_ports::ItemRepository::submit(
+        app.store.as_ref(),
+        &rtm_domain::UserId("owner".into()),
+        &item,
+        0,
+    )
+    .await
+    .unwrap();
+    request(&app, "/healthz?token=rtm_pat_SECRET").await;
+    request(&app, "/feeds/rtm_feed_SECRET.xml").await;
+    request(&app, &format!("/v1/items/{}?SECRET", item.id)).await;
 
     let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains(r#"route="/healthz""#), "{logs}");
     assert!(logs.contains(r#"route="unmatched""#), "{logs}");
+    assert!(logs.contains(r#"route="/v1/items/{id}""#), "{logs}");
     assert!(!logs.contains("SECRET"), "token leaked into logs:\n{logs}");
+    assert!(
+        !logs.contains(common::TOKEN),
+        "bearer token leaked into logs:\n{logs}"
+    );
+    assert!(
+        !logs.contains(&item.id.to_string()),
+        "item ID leaked into logs:\n{logs}"
+    );
 }

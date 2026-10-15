@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! HTTP API for read-to-me.
 //!
-//! The minimal server exposes only the health endpoints from NFR-M5. Product routes
-//! (`/v1/items`, feeds) arrive with the MVP.
+//! Health endpoints (NFR-M5), plus item submission and status under `/v1`, which
+//! require authentication.
+
+pub mod auth;
+pub mod items;
+pub mod problem;
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::MatchedPath;
+use axum::extract::{DefaultBodyLimit, MatchedPath};
 use axum::http::{Request, StatusCode};
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::routing::{get, post};
+use axum::{Json, Router, middleware};
+use rtm_ports::ItemRepository;
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tower_http::timeout::TimeoutLayer;
@@ -75,9 +81,24 @@ fn request_span<B>(request: &Request<B>) -> tracing::Span {
     tracing::info_span!("request", method = %request.method(), route)
 }
 
+/// Request bodies under `/v1` are small JSON documents.
+const API_BODY_LIMIT: usize = 16 * 1024;
+
+pub use auth::StaticToken;
+
 /// The application router with its middleware stack.
-pub fn router() -> Router {
+pub fn router<R: ItemRepository + 'static>(items: Arc<R>, auth: StaticToken) -> Router {
+    let v1 = Router::new()
+        .route("/v1/items", post(items::submit::<R>))
+        .route("/v1/items/{id}", get(items::get::<R>))
+        .layer(DefaultBodyLimit::max(API_BODY_LIMIT))
+        .route_layer(middleware::from_fn_with_state(
+            Arc::new(auth),
+            auth::require_token,
+        ))
+        .with_state(items);
     Router::new()
+        .merge(v1)
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
@@ -87,12 +108,12 @@ pub fn router() -> Router {
         ))
 }
 
-/// Serve the router on `listener` until `shutdown` completes, then drain in-flight requests.
-pub async fn serve<F>(listener: TcpListener, shutdown: F) -> std::io::Result<()>
+/// Serve `router` on `listener` until `shutdown` completes, then drain in-flight requests.
+pub async fn serve<F>(listener: TcpListener, router: Router, shutdown: F) -> std::io::Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    axum::serve(listener, router())
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown)
         .await
 }

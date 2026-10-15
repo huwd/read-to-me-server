@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! NFR-M5: liveness and readiness endpoints.
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt;
+mod common;
+
+use axum::http::StatusCode;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tower::ServiceExt;
 
 async fn get(path: &str) -> (StatusCode, serde_json::Value) {
-    let response = rtm_api::router()
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
-    (status, json)
+    let reply = common::app().await.get(path).await;
+    (reply.status, reply.json)
 }
 
 #[tokio::test]
@@ -47,7 +40,8 @@ async fn serves_over_tcp_and_shuts_down() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(rtm_api::serve(listener, async {
+    let app = common::app().await;
+    let server = tokio::spawn(rtm_api::serve(listener, app.router.clone(), async {
         let _ = stopped.await;
     }));
 
