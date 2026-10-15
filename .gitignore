@@ -1,1 +1,4 @@
 /target/
+
+# Default server data directory (RTM_DATA_DIR)
+/data/
