@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -177,10 +177,11 @@ pub async fn submit<R: ItemRepository>(
 pub async fn get<R: ItemRepository>(
     State(items): State<Arc<R>>,
     Extension(user): Extension<UserId>,
-    Path(id): Path<String>,
+    id: Result<Path<String>, PathRejection>,
 ) -> Response {
-    // A malformed ID is just another item that doesn't exist.
-    let Ok(id) = id.parse::<ItemId>() else {
+    // A malformed ID (including one that isn't valid UTF-8) is just another item that
+    // doesn't exist.
+    let Some(id) = id.ok().and_then(|Path(id)| id.parse::<ItemId>().ok()) else {
         return Problem::not_found().into_response();
     };
     match items.get(&user, id).await {
