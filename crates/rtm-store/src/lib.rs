@@ -6,8 +6,8 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
-use rtm_domain::{FailureCode, Item, ItemId, ItemState, Millis, Stage, UserId};
-use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StoreError, StoreResult};
+use rtm_domain::{FailureCode, Item, ItemId, ItemState, Millis, Source, Stage, UserId};
+use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError, StoreResult};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
     SqliteSynchronous,
@@ -95,6 +95,7 @@ macro_rules! select_items {
     ($tail:literal) => {
         concat!(
             "SELECT id, user_id, source_url, state, stage, failure_code, failure_message, \
+             source_key, source_final_url, source_kind, source_charset, source_size, \
              created_at, updated_at FROM items ",
             $tail
         )
@@ -124,12 +125,23 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
             ));
         }
     };
+    let source = match row.get::<Option<&str>, _>("source_key") {
+        Some(key) => Some(Source {
+            key: parse(key)?,
+            final_url: row.get("source_final_url"),
+            kind: parse(row.get::<&str, _>("source_kind"))?,
+            charset: row.get("source_charset"),
+            size: u64::try_from(row.get::<i64, _>("source_size")).map_err(storage)?,
+        }),
+        None => None,
+    };
     Ok(Item {
         id: parse(row.get::<&str, _>("id"))?,
         user: UserId(row.get("user_id")),
         source_url: row.get("source_url"),
         state,
         failure_message: row.get("failure_message"),
+        source,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -259,6 +271,7 @@ impl ItemRepository for Store {
             source_url: source_url.to_string(),
             state: ItemState::submitted(),
             failure_message: None,
+            source: None,
             created_at: now,
             updated_at: now,
         };
@@ -295,7 +308,22 @@ impl ItemRepository for Store {
 }
 
 impl JobQueue for Store {
-    async fn claim(&self, worker: &str, now: Millis, lease_ms: Millis) -> StoreResult<Option<Job>> {
+    async fn claim(
+        &self,
+        worker: &str,
+        stages: &[Stage],
+        now: Millis,
+        lease_ms: Millis,
+    ) -> StoreResult<Option<Job>> {
+        // Bound as one JSON array parameter; SQL text is never built at runtime.
+        let stages = format!(
+            "[{}]",
+            stages
+                .iter()
+                .map(|s| format!("\"{}\"", s.as_str()))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         loop {
             let mut tx = self.begin().await?;
             // Runnable: due, and either never leased or with an expired lease (a crashed
@@ -306,12 +334,14 @@ impl JobQueue for Store {
                  WHERE id = ( \
                    SELECT j.id FROM jobs j LEFT JOIN queue_turns t ON t.user_id = j.user_id \
                    WHERE j.run_after <= ?3 AND (j.locked_until IS NULL OR j.locked_until <= ?3) \
+                     AND j.stage IN (SELECT value FROM json_each(?4)) \
                    ORDER BY COALESCE(t.turn, 0), j.run_after, j.id LIMIT 1) \
                  RETURNING id, item_id, user_id, stage, attempts, locked_until",
             )
             .bind(worker)
             .bind(now + lease_ms)
             .bind(now)
+            .bind(&stages)
             .fetch_optional(&mut *tx)
             .await
             .map_err(storage)?;
@@ -377,10 +407,40 @@ impl JobQueue for Store {
         }
     }
 
-    async fn complete(&self, job: &Job, worker: &str, now: Millis) -> StoreResult<Item> {
+    async fn complete(
+        &self,
+        job: &Job,
+        worker: &str,
+        output: StageOutput,
+        now: Millis,
+    ) -> StoreResult<Item> {
+        // Each stage records exactly its own output.
+        match (job.stage, &output) {
+            (Stage::Fetch, StageOutput::Source(_)) => {}
+            (Stage::Fetch, _) | (_, StageOutput::Source(_)) => {
+                return Err(StoreError::WrongOutput { stage: job.stage });
+            }
+            (_, StageOutput::Nothing) => {}
+        }
         let mut tx = self.begin().await?;
         take_job(&mut tx, job, worker, now).await?;
         let mut item = load_item(&mut tx, job.item).await?;
+        if let StageOutput::Source(source) = output {
+            sqlx::query(
+                "UPDATE items SET source_key = ?, source_final_url = ?, source_kind = ?, \
+                 source_charset = ?, source_size = ? WHERE id = ?",
+            )
+            .bind(source.key.as_str())
+            .bind(&source.final_url)
+            .bind(source.kind.as_str())
+            .bind(&source.charset)
+            .bind(i64::try_from(source.size).map_err(storage)?)
+            .bind(item.id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            item.source = Some(source);
+        }
         let next = item.state.complete(job.stage)?;
         save_state(&mut tx, &mut item, next, None, now).await?;
         if let ItemState::Pending { next } = next {
