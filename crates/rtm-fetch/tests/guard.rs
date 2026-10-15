@@ -732,6 +732,32 @@ async fn missing_robots_allows_and_failing_robots_retries() {
     assert_eq!(failing.paths(), ["/robots.txt"]);
 }
 
+/// RFC 9309 §2.3.1.3: every 4xx means "no restrictions", including the ones that are
+/// retried for articles.
+#[tokio::test]
+async fn every_client_error_for_robots_allows() {
+    for code in [400, 401, 403, 404, 408, 410, 425, 429, 451] {
+        let server = Server::start(robots_site(status(code))).await;
+        let guard = fetcher(&server, Dns::with(&[("r.test", &["127.0.0.1"])]), |_| {});
+        let result = guard.fetch_article(&url(&server, "r.test", "/essay")).await;
+        assert!(result.is_ok(), "robots.txt {code}: {result:?}");
+        assert_eq!(
+            server.paths(),
+            ["/robots.txt", "/essay"],
+            "robots.txt {code}"
+        );
+    }
+    for code in [500, 502, 503] {
+        let server = Server::start(robots_site(status(code))).await;
+        let guard = fetcher(&server, Dns::with(&[("r.test", &["127.0.0.1"])]), |_| {});
+        let err = guard
+            .fetch_article(&url(&server, "r.test", "/essay"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), FailureCode::FetchFailed, "robots.txt {code}");
+    }
+}
+
 #[tokio::test]
 async fn robots_txt_on_a_redirect_target_is_checked_too() {
     let port = Arc::new(AtomicUsize::new(0));

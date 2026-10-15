@@ -295,6 +295,10 @@ impl SafeFetcher {
 
     async fn fetch_article_inner(&self, url: &Url) -> Result<Fetched, FetchError> {
         let response = self.get(url, true).await?;
+        let status = response.inner.status();
+        if !status.is_success() {
+            return Err(status_error(status));
+        }
         let declared = response
             .inner
             .headers()
@@ -317,7 +321,9 @@ impl SafeFetcher {
     }
 
     /// GET `url`, following redirects by hand. Every hop is checked by the policy and,
-    /// if `respect_robots`, against the hop's robots.txt before it is requested.
+    /// if `respect_robots`, against the hop's robots.txt before it is requested. Returns
+    /// the final response whatever its status: callers classify it, because an error
+    /// status means different things for an article and for robots.txt.
     async fn get(&self, url: &Url, respect_robots: bool) -> Result<Response, FetchError> {
         let mut url = url.clone();
         for _ in 0..=self.config.max_redirects {
@@ -341,21 +347,15 @@ impl SafeFetcher {
                     .get(LOCATION)
                     .and_then(|v| v.to_str().ok())
                     .and_then(|loc| url.join(loc).ok());
-                match next {
-                    Some(next) => {
-                        url = next;
-                        continue;
-                    }
-                    None => return Err(FetchError::Unavailable(status.as_u16())),
+                if let Some(next) = next {
+                    url = next;
+                    continue;
                 }
             }
-            if status.is_success() {
-                return Ok(Response {
-                    url,
-                    inner: response,
-                });
-            }
-            return Err(status_error(status));
+            return Ok(Response {
+                url,
+                inner: response,
+            });
         }
         Err(FetchError::TooManyRedirects)
     }
@@ -368,23 +368,26 @@ impl SafeFetcher {
         }
         let robots_url = url.join("/robots.txt").expect("joining an absolute path");
         // robots.txt itself is fetched through the guard, without a robots check.
+        let unreachable =
+            |detail: String| FetchError::Transient(format!("robots.txt unreachable: {detail}"));
         let rules = match Box::pin(self.get(&robots_url, false)).await {
             Ok(response) => {
-                let body = read_truncated(response.inner, robots::MAX_SIZE).await?;
-                robots::Rules::parse(&body)
-            }
-            // RFC 9309 §2.3.1.3: "unavailable" (4xx) means no restrictions.
-            Err(FetchError::Unavailable(status)) if (400..500).contains(&status) => {
-                robots::Rules::AllowAll
+                let status = response.inner.status();
+                if status.is_success() {
+                    let body = read_truncated(response.inner, robots::MAX_SIZE).await?;
+                    robots::Rules::parse(&body)
+                } else if status.is_server_error() {
+                    // §2.3.1.4: "unreachable" means assume complete disallow, so retry
+                    // later rather than fail the item.
+                    return Err(unreachable(format!("HTTP {status}")));
+                } else {
+                    // §2.3.1.3: "unavailable" (every 4xx, including 408 and 429, and a
+                    // redirect with nowhere to go) means no restrictions.
+                    robots::Rules::AllowAll
+                }
             }
             Err(FetchError::TooManyRedirects) => robots::Rules::AllowAll,
-            // §2.3.1.4: "unreachable" (5xx, network) means assume complete disallow,
-            // so retry later rather than fail the item.
-            Err(FetchError::Transient(detail)) => {
-                return Err(FetchError::Transient(format!(
-                    "robots.txt unreachable: {detail}"
-                )));
-            }
+            Err(FetchError::Transient(detail)) => return Err(unreachable(detail)),
             Err(other) => return Err(other),
         };
         let allowed = rules.allowed(url);
