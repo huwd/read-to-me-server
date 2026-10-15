@@ -83,7 +83,7 @@ Requirement IDs are stable and referenced from tests (`#[test] // FR-SUB-01`) an
 ### 5.3 Fetching (FET)
 - <a id="fr-fet-01"></a>**FR-FET-01** The server fetches URLs through an **egress guard**: DNS resolved once, every resolved address checked against a deny-list (loopback, RFC1918, link-local incl. `169.254.169.254`, CGNAT, ULA, multicast, IPv4-mapped IPv6, etc.), connection pinned to the vetted IP (prevents DNS rebinding).
 - <a id="fr-fet-02"></a>**FR-FET-02** Redirects followed manually (max 5), each hop re-validated against [FR-FET-01](#fr-fet-01) and [FR-SUB-02](#fr-sub-02).
-- <a id="fr-fet-03"></a>**FR-FET-03** Limits: connect timeout 5 s, total 30 s, max body 10 MB (HTML) / 50 MB (PDF), max decompressed size 10× compressed with an absolute cap.
+- <a id="fr-fet-03"></a>**FR-FET-03** Limits: connect timeout 5 s, total 30 s, max body 10 MB (HTML) / 50 MB (PDF), **measured after decompression**. There is no separate compression-ratio limit ([ADR-0005 Amendment 1](adr/0005-egress-guard.md#amendment-1-2026-10-15-no-separate-decompression-ratio-limit)).
 - <a id="fr-fet-04"></a>**FR-FET-04** Content-Type allow-list: `text/html`, `application/xhtml+xml`, `application/pdf`, `text/plain`. Sniffed content must agree with the declared type.
 - <a id="fr-fet-05"></a>**FR-FET-05** Honest User-Agent identifying the service (product token `read-to-me`) and a project URL. No impersonation of browsers.
 - <a id="fr-fet-07"></a>**FR-FET-07** **robots.txt is respected by default** (RFC 9309), matching our product token and falling back to `*`:
