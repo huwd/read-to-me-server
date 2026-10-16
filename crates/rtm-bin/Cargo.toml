@@ -19,9 +19,17 @@ ipnet = "2.12.2"
 rtm-api = { version = "0.1.0", path = "../rtm-api" }
 rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
 rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+rtm-extract = { version = "0.1.0", path = "../rtm-extract" }
 rtm-fetch = { version = "0.1.0", path = "../rtm-fetch" }
 rtm-pipeline = { version = "0.1.0", path = "../rtm-pipeline" }
 rtm-store = { version = "0.1.0", path = "../rtm-store" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+
+[dev-dependencies]
+rtm-article = { version = "0.1.0", path = "../rtm-article" }
+rtm-ports = { version = "0.1.0", path = "../rtm-ports" }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
