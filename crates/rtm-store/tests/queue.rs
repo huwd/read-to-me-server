@@ -8,8 +8,8 @@ use rtm_domain::{FailureCode, ItemState, Stage, UserId};
 use rtm_ports::{FailOutcome, ItemRepository, JobQueue, StageOutput, StoreError};
 use rtm_store::{QueuePolicy, Store};
 
-/// A plausible output for completing `job`: fetch records a source; later stages
-/// record nothing yet.
+/// A plausible output for completing `job`: fetch records a source, extract an
+/// article; later stages record nothing yet.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -18,6 +18,13 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
             kind: rtm_domain::SourceKind::Html,
             charset: Some("utf-8".into()),
             size: 42,
+        }),
+        rtm_domain::Stage::Extract => rtm_ports::StageOutput::Article(rtm_domain::ArticleRecord {
+            key: rtm_domain::BlobKey::from_hash([8; 32]),
+            extractor: "generic-html@1".into(),
+            title: "A title".into(),
+            title_derived: false,
+            words: 1234,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }
@@ -800,4 +807,57 @@ async fn stages_cannot_record_outputs_that_are_not_theirs() {
             stage: Stage::Extract
         })
     ));
+}
+
+#[tokio::test]
+async fn completing_extract_records_the_article() {
+    let db = db().await;
+    let item = db
+        .store
+        .submit(&user("ann"), "https://example.org/a", 0)
+        .await
+        .unwrap();
+    let fetch = db
+        .store
+        .claim("w1", &[Stage::Fetch], 1, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+    db.store
+        .complete(&fetch, "w1", output_for(&fetch), 2)
+        .await
+        .unwrap();
+    let extract = db
+        .store
+        .claim("w1", &[Stage::Extract], 3, LEASE)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Extract must record an article.
+    assert!(matches!(
+        db.store
+            .complete(&extract, "w1", StageOutput::Nothing, 4)
+            .await,
+        Err(StoreError::WrongOutput {
+            stage: Stage::Extract
+        })
+    ));
+    db.store
+        .complete(&extract, "w1", output_for(&extract), 4)
+        .await
+        .unwrap();
+
+    let StageOutput::Article(expected) = output_for(&extract) else {
+        unreachable!()
+    };
+    let stored = db.store.get(&user("ann"), item.id).await.unwrap().unwrap();
+    assert_eq!(stored.article, Some(expected));
+    assert!(stored.source.is_some(), "the source is kept alongside");
+    assert_eq!(
+        stored.state,
+        ItemState::Pending {
+            next: Stage::Script
+        }
+    );
 }

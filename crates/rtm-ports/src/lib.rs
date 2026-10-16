@@ -4,7 +4,9 @@
 
 use std::future::Future;
 
-use rtm_domain::{FailureCode, Item, ItemId, Millis, Source, Stage, TransitionError, UserId};
+use rtm_domain::{
+    ArticleRecord, FailureCode, Item, ItemId, Millis, Source, Stage, TransitionError, UserId,
+};
 
 /// A claimed unit of work: run `stage` for `item`. Held under a lease until `lease_until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,8 @@ pub struct Job {
 pub enum StageOutput {
     /// The fetch stage's document, already written to the blob store.
     Source(Source),
+    /// The extract stage's article, already written to the blob store.
+    Article(ArticleRecord),
     /// Stages whose outputs aren't recorded yet.
     Nothing,
 }

@@ -6,7 +6,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
-use rtm_domain::{FailureCode, Item, ItemId, ItemState, Millis, Source, Stage, UserId};
+use rtm_domain::{
+    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, Source, Stage, UserId,
+};
 use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError, StoreResult};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
@@ -96,6 +98,7 @@ macro_rules! select_items {
         concat!(
             "SELECT id, user_id, source_url, state, stage, failure_code, failure_message, \
              source_key, source_final_url, source_kind, source_charset, source_size, \
+             article_key, extractor, title, title_derived, article_words, \
              created_at, updated_at FROM items ",
             $tail
         )
@@ -135,6 +138,16 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         }),
         None => None,
     };
+    let article = match row.get::<Option<&str>, _>("article_key") {
+        Some(key) => Some(ArticleRecord {
+            key: parse(key)?,
+            extractor: row.get("extractor"),
+            title: row.get("title"),
+            title_derived: row.get::<i64, _>("title_derived") == 1,
+            words: u64::try_from(row.get::<i64, _>("article_words")).map_err(storage)?,
+        }),
+        None => None,
+    };
     Ok(Item {
         id: parse(row.get::<&str, _>("id"))?,
         user: UserId(row.get("user_id")),
@@ -142,6 +155,7 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         state,
         failure_message: row.get("failure_message"),
         source,
+        article,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -272,6 +286,7 @@ impl ItemRepository for Store {
             state: ItemState::submitted(),
             failure_message: None,
             source: None,
+            article: None,
             created_at: now,
             updated_at: now,
         };
@@ -416,8 +431,9 @@ impl JobQueue for Store {
     ) -> StoreResult<Item> {
         // Each stage records exactly its own output.
         match (job.stage, &output) {
-            (Stage::Fetch, StageOutput::Source(_)) => {}
-            (Stage::Fetch, _) | (_, StageOutput::Source(_)) => {
+            (Stage::Fetch, StageOutput::Source(_)) | (Stage::Extract, StageOutput::Article(_)) => {}
+            (Stage::Fetch | Stage::Extract, _)
+            | (_, StageOutput::Source(_) | StageOutput::Article(_)) => {
                 return Err(StoreError::WrongOutput { stage: job.stage });
             }
             (_, StageOutput::Nothing) => {}
@@ -425,21 +441,40 @@ impl JobQueue for Store {
         let mut tx = self.begin().await?;
         take_job(&mut tx, job, worker, now).await?;
         let mut item = load_item(&mut tx, job.item).await?;
-        if let StageOutput::Source(source) = output {
-            sqlx::query(
-                "UPDATE items SET source_key = ?, source_final_url = ?, source_kind = ?, \
+        match output {
+            StageOutput::Source(source) => {
+                sqlx::query(
+                    "UPDATE items SET source_key = ?, source_final_url = ?, source_kind = ?, \
                  source_charset = ?, source_size = ? WHERE id = ?",
+                )
+                .bind(source.key.as_str())
+                .bind(&source.final_url)
+                .bind(source.kind.as_str())
+                .bind(&source.charset)
+                .bind(i64::try_from(source.size).map_err(storage)?)
+                .bind(item.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+                item.source = Some(source);
+            }
+            StageOutput::Article(article) => {
+                sqlx::query(
+                "UPDATE items SET article_key = ?, extractor = ?, title = ?, title_derived = ?, \
+                 article_words = ? WHERE id = ?",
             )
-            .bind(source.key.as_str())
-            .bind(&source.final_url)
-            .bind(source.kind.as_str())
-            .bind(&source.charset)
-            .bind(i64::try_from(source.size).map_err(storage)?)
+            .bind(article.key.as_str())
+            .bind(&article.extractor)
+            .bind(&article.title)
+            .bind(i64::from(article.title_derived))
+            .bind(i64::try_from(article.words).map_err(storage)?)
             .bind(item.id.to_string())
             .execute(&mut *tx)
             .await
             .map_err(storage)?;
-            item.source = Some(source);
+                item.article = Some(article);
+            }
+            StageOutput::Nothing => {}
         }
         let next = item.state.complete(job.stage)?;
         save_state(&mut tx, &mut item, next, None, now).await?;

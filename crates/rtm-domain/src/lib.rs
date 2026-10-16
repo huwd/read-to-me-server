@@ -315,6 +315,18 @@ pub struct Source {
     pub size: u64,
 }
 
+/// The extracted article an item narrates (ADR-0006, FR-EXT-04).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArticleRecord {
+    pub key: BlobKey,
+    /// `id@version` of the extractor that produced it.
+    pub extractor: String,
+    pub title: String,
+    /// True when the page had no title and one was derived.
+    pub title_derived: bool,
+    pub words: u64,
+}
+
 /// A submitted article and where it is in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -325,6 +337,8 @@ pub struct Item {
     pub failure_message: Option<String>,
     /// Set once the fetch stage completes.
     pub source: Option<Source>,
+    /// Set once the extract stage completes.
+    pub article: Option<ArticleRecord>,
     pub created_at: Millis,
     pub updated_at: Millis,
 }

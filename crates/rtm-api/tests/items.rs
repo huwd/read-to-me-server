@@ -9,8 +9,8 @@ use common::{App, Reply, TOKEN, app};
 use rtm_domain::Stage;
 use rtm_ports::JobQueue;
 
-/// A plausible output for completing `job`: fetch records a source; later stages
-/// record nothing yet.
+/// A plausible output for completing `job`: fetch records a source, extract an
+/// article; later stages record nothing yet.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -19,6 +19,13 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
             kind: rtm_domain::SourceKind::Html,
             charset: Some("utf-8".into()),
             size: 42,
+        }),
+        rtm_domain::Stage::Extract => rtm_ports::StageOutput::Article(rtm_domain::ArticleRecord {
+            key: rtm_domain::BlobKey::from_hash([8; 32]),
+            extractor: "generic-html@1".into(),
+            title: "A title".into(),
+            title_derived: false,
+            words: 1234,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }
