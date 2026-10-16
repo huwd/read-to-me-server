@@ -14,7 +14,9 @@ use rtm_api::StaticToken;
 use rtm_blobs::BlobStore;
 use rtm_domain::UserId;
 use rtm_fetch::SafeFetcher;
-use rtm_pipeline::{ExtractConfig, ExtractStage, FetchStage, StageRunner, Worker};
+use rtm_pipeline::{
+    DEFAULT_MAX_WORDS, ExtractConfig, ExtractStage, FetchStage, ScriptStage, StageRunner, Worker,
+};
 use rtm_store::{QueuePolicy, Store};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
@@ -35,6 +37,7 @@ environment:
   RTM_LOG                  log filter, e.g. info or rtm_api=debug (default info)
   RTM_FETCH_WORKERS        concurrent fetches (default 2)
   RTM_EXTRACT_WORKERS      concurrent extractions (default 1)
+  RTM_MAX_WORDS            longest article narrated, in words (default 30000)
   RTM_FETCH_IGNORE_ROBOTS  true to ignore robots.txt (\"disrespectful mode\");
                            same as --ignore-robots
   RTM_FETCH_DENY           extra address ranges never to fetch, comma-separated
@@ -116,6 +119,19 @@ fn extract_worker_count() -> Result<usize, String> {
     }
 }
 
+/// RTM_MAX_WORDS: the longest article narrated (FR-TTS-06).
+fn max_words() -> Result<u64, String> {
+    match std::env::var("RTM_MAX_WORDS") {
+        Err(_) => Ok(DEFAULT_MAX_WORDS),
+        Ok(n) => n
+            .trim()
+            .parse()
+            .ok()
+            .filter(|n| *n >= 1)
+            .ok_or_else(|| format!("RTM_MAX_WORDS={n:?}: expected a positive number of words")),
+    }
+}
+
 fn data_dir() -> PathBuf {
     std::env::var_os("RTM_DATA_DIR").map_or_else(|| DEFAULT_DATA_DIR.into(), PathBuf::from)
 }
@@ -176,8 +192,9 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let extract_workers = match extract_worker_count() {
-        Ok(n) => n,
+    let config = extract_worker_count().and_then(|n| Ok((n, max_words()?)));
+    let (extract_workers, max_words) = match config {
+        Ok(config) => config,
         Err(e) => {
             tracing::error!(error = %e, "invalid configuration");
             return ExitCode::FAILURE;
@@ -187,13 +204,19 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
     let extract_stage: Arc<dyn StageRunner> = Arc::new(ExtractStage::new(
         this_binary,
         vec!["extract-worker".into()],
-        blobs,
+        blobs.clone(),
         ExtractConfig::default(),
+    ));
+    let script_stage: Arc<dyn StageRunner> = Arc::new(ScriptStage::new(
+        blobs,
+        rtm_narrate::Options::default(),
+        max_words,
     ));
     let (stop_workers, workers_stopped) = tokio::sync::watch::channel(false);
     let pools = [
         ("fetch", fetch.workers, &fetch_stage),
         ("extract", extract_workers, &extract_stage),
+        ("script", 1, &script_stage),
     ];
     let workers: Vec<_> = pools
         .iter()
