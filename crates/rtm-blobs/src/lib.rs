@@ -186,36 +186,97 @@ impl BlobStore {
         self.path(kind, key)
     }
 
-    /// A fresh scratch file path on the blob store's filesystem, for building a large
-    /// blob that [`BlobStore::put_file`] can then move into place without copying.
-    pub fn scratch_path(&self, suffix: &str) -> io::Result<PathBuf> {
+    /// A fresh scratch file on the blob store's filesystem, for building a large blob
+    /// that [`BlobStore::put_file`] can then move into place without copying. The file
+    /// is removed when the [`Scratch`] is dropped, including when the work using it is
+    /// cancelled.
+    pub fn scratch(&self, suffix: &str) -> io::Result<Scratch> {
         let tmp = self.root.join("tmp");
         create_dir_durable(&tmp)?;
-        Ok(tmp.join(format!(
+        Ok(Scratch(tmp.join(format!(
             "scratch.{}.{}.{suffix}",
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        )))
+        ))))
     }
 
-    /// Move the finished file at `from` (made with [`BlobStore::scratch_path`]) into the
-    /// store under `key`, durably. If the blob already exists, `from` is removed instead.
-    pub async fn put_file(&self, kind: BlobKind, key: &BlobKey, from: PathBuf) -> io::Result<()> {
+    /// Move the finished scratch file into the store under `key`, durably. If the blob
+    /// already exists, the scratch file is discarded and the existing blob made durable.
+    pub async fn put_file(&self, kind: BlobKind, key: &BlobKey, from: Scratch) -> io::Result<()> {
         let path = self.path(kind, key);
         tokio::task::spawn_blocking(move || {
             let dir = path.parent().expect("blob paths have a parent");
             create_dir_durable(dir)?;
             if path.exists() {
-                fs::remove_file(&from)?;
-                return Ok(());
+                return sync_existing(&path);
             }
-            File::open(&from)?.sync_all()?;
-            fs::rename(&from, &path)?;
+            File::open(from.path())?.sync_all()?;
+            fs::rename(from.path(), &path)?;
             sync_dir(dir)
         })
         .await
         .map_err(io::Error::other)?
     }
+
+    /// Make an existing blob durable. A blob found already in place may be left by an
+    /// attempt that crashed between its rename and its directory fsync, so a stage that
+    /// reuses one calls this before recording it.
+    pub async fn sync(&self, kind: BlobKind, key: &BlobKey) -> io::Result<()> {
+        let path = self.path(kind, key);
+        tokio::task::spawn_blocking(move || sync_existing(&path))
+            .await
+            .map_err(io::Error::other)?
+    }
+
+    /// Remove scratch and temporary files last modified more than `older_than` ago:
+    /// leftovers from a process that crashed or was killed mid-write. Returns how many
+    /// were removed. Recent files are kept, as they may belong to work still running.
+    pub fn sweep_scratch(&self, older_than: std::time::Duration) -> io::Result<usize> {
+        let tmp = self.root.join("tmp");
+        let entries = match fs::read_dir(&tmp) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            let stale = meta.modified()?.elapsed().is_ok_and(|age| age > older_than);
+            if meta.is_file() && stale {
+                match fs::remove_file(entry.path()) {
+                    Ok(()) => removed += 1,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(removed)
+    }
+}
+
+/// A scratch file from [`BlobStore::scratch`], removed when dropped unless it has been
+/// moved into the store.
+#[derive(Debug)]
+pub struct Scratch(PathBuf);
+
+impl Scratch {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // After a successful put_file the file has been renamed away: NotFound.
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Make an existing blob's contents and directory entry durable.
+fn sync_existing(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()?;
+    sync_dir(path.parent().expect("blob paths have a parent"))
 }
 
 fn sync_dir(dir: &Path) -> io::Result<()> {
@@ -259,8 +320,7 @@ fn write_atomic(path: &Path, tmp_dir: &Path, bytes: &[u8]) -> io::Result<()> {
         // Immutable: same key, same content. But an earlier attempt may have crashed
         // between its rename and its fsyncs, so make sure this copy is durable before
         // reporting it stored.
-        File::open(path)?.sync_all()?;
-        return sync_dir(dir);
+        return sync_existing(path);
     }
     create_dir_durable(tmp_dir)?;
     let tmp = tmp_dir.join(format!(
@@ -285,6 +345,8 @@ fn write_atomic(path: &Path, tmp_dir: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[tokio::test]
@@ -446,29 +508,71 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = BlobStore::new(dir.path());
         let key = source_key(b"episode", b"");
-        let scratch = store.scratch_path("mp3").unwrap();
-        fs::write(&scratch, b"mp3 bytes").unwrap();
+        let scratch = store.scratch("mp3").unwrap();
+        let path = scratch.path().to_path_buf();
+        fs::write(&path, b"mp3 bytes").unwrap();
         store
-            .put_file(BlobKind::Episode, &key, scratch.clone())
+            .put_file(BlobKind::Episode, &key, scratch)
             .await
             .unwrap();
-        assert!(!scratch.exists());
+        assert!(!path.exists());
         assert_eq!(
             fs::read(store.local_path(BlobKind::Episode, &key)).unwrap(),
             b"mp3 bytes"
         );
         // A second copy of an existing blob is discarded, not swapped in.
-        let again = store.scratch_path("mp3").unwrap();
-        fs::write(&again, b"different").unwrap();
+        let again = store.scratch("mp3").unwrap();
+        let again_path = again.path().to_path_buf();
+        fs::write(&again_path, b"different").unwrap();
         store
-            .put_file(BlobKind::Episode, &key, again.clone())
+            .put_file(BlobKind::Episode, &key, again)
             .await
             .unwrap();
-        assert!(!again.exists());
+        assert!(!again_path.exists());
         assert_eq!(
             store.get(BlobKind::Episode, &key).await.unwrap(),
             b"mp3 bytes"
         );
+        store.sync(BlobKind::Episode, &key).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn scratch_files_are_removed_when_abandoned() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path());
+        let scratch = store.scratch("wav").unwrap();
+        let path = scratch.path().to_path_buf();
+        fs::write(&path, b"half an episode").unwrap();
+        drop(scratch);
+        assert!(!path.exists());
+
+        // A failed move removes its scratch file too.
+        let scratch = store.scratch("mp3").unwrap();
+        let path = scratch.path().to_path_buf();
+        fs::write(&path, b"mp3 bytes").unwrap();
+        fs::write(dir.path().join("episode"), b"not a directory").unwrap();
+        let key = source_key(b"episode", b"");
+        assert!(
+            store
+                .put_file(BlobKind::Episode, &key, scratch)
+                .await
+                .is_err()
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn sweeping_removes_only_stale_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path());
+        assert_eq!(store.sweep_scratch(Duration::ZERO).unwrap(), 0);
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("scratch.1.0.wav"), b"left by a crash").unwrap();
+        assert_eq!(store.sweep_scratch(Duration::from_secs(3_600)).unwrap(), 0);
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(store.sweep_scratch(Duration::from_millis(1)).unwrap(), 1);
+        assert_eq!(fs::read_dir(&tmp).unwrap().count(), 0);
     }
 
     #[test]
