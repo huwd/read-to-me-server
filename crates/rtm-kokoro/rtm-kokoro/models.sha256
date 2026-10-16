@@ -1,0 +1,12 @@
+# Kokoro-82M v1.0 (ONNX), Apache-2.0: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX
+# Pinned to repository revision 1939ad2a8e416c0acfeecc08a694d14ef25f2231.
+# Format: <sha256>  <path in the repository>  <path under RTM_KOKORO_DIR>
+# The engine verifies every file against this list before loading; `cargo xtask
+# kokoro-models` downloads them. Never commit the files themselves.
+8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb  onnx/model.onnx  model.onnx
+77a02c8e164413299b4b4c403b14f8e0e1c1b727db4d46a09d6327b861060a34  tokenizer.json  tokenizer.json
+669fe0647f9dd04fcab92f1439a40eeb4c8b4ab1f82e4996fe3d918ce4a63b73  voices/bf_emma.bin  voices/bf_emma.bin
+3754352c4aaa46d17f27654ab7518d65b62ad6163a0f55a5f4330c2da2c4e94f  voices/bf_isabella.bin  voices/bf_isabella.bin
+c4b235a4c1f2cd3b939fed08b899ce9385638b763f7b73a59616c4fc9bd6c9bc  voices/bm_george.bin  voices/bm_george.bin
+b8f671cef828c30e66fdf0b0756a76bba58f6bb3398cbbf27058642acbcedb97  voices/bm_lewis.bin  voices/bm_lewis.bin
+d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b  voices/af_heart.bin  voices/af_heart.bin
