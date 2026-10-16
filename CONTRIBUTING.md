@@ -32,14 +32,32 @@ Signed-off-by: Your Name <you@example.com>
 - Run the same checks CI runs (`.github/workflows/ci.yml`):
   ```sh
   cargo fmt --all --check
-  cargo clippy --workspace --all-targets --locked -- -D warnings
-  cargo test --workspace --locked
+  cargo clippy --workspace --exclude rtm-kokoro --all-targets --locked -- -D warnings
+  cargo test --workspace --exclude rtm-kokoro --locked
   cargo deny check licenses bans sources advisories
   cargo xtask docs-links check
   cargo xtask commits
   ```
 - Reference requirement IDs (`FR-*`, `NFR-*`) in tests and in the PR description.
 - New third-party dependencies must pass the licence allow-list in [`deny.toml`](deny.toml).
+
+## The Kokoro speech engine
+
+The real speech engine is behind the `kokoro` cargo feature ([ADR-0014](docs/adr/0014-kokoro-dependencies-and-build.md)), so ordinary builds and the commands above don't need it. Building it needs **cmake** and **clang/libclang** (espeak-ng is compiled from source), and it downloads ONNX Runtime, verified against a pinned SHA-256.
+
+```sh
+cargo clippy -p rtm-kokoro -p rtm-bin --features rtm-bin/kokoro --all-targets --locked -- -D warnings
+cargo test -p rtm-kokoro -p rtm-bin --features rtm-bin/kokoro --locked
+```
+
+To hear it, fetch the pinned model files (about 330 MB; never commit them), then run the TTS process:
+
+```sh
+cargo xtask kokoro-models models/kokoro
+cargo build --release -p rtm-bin --features kokoro
+RTM_TTS_ENGINE=kokoro RTM_KOKORO_DIR=models/kokoro ./target/release/rtm tts
+RTM_KOKORO_DIR=models/kokoro cargo test -p rtm-kokoro --release --test real_model -- --ignored
+```
 
 ## Security issues
 

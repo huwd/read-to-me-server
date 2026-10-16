@@ -2,3 +2,6 @@
 
 # Default server data directory (RTM_DATA_DIR)
 /data/
+
+# Kokoro model files fetched by `cargo xtask kokoro-models` (never committed)
+/models/

@@ -30,9 +30,29 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        # rtm-kokoro has its own job: it needs cmake, libclang and ONNX Runtime (ADR-0014).
+        run: cargo clippy --workspace --exclude rtm-kokoro --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude rtm-kokoro --locked
+
+  kokoro:
+    name: Kokoro engine (feature build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: kokoro
+      # cmake and clang (with libclang) are on the runner image; espeak-ng builds from
+      # source, and ort downloads ONNX Runtime, verified by its pinned SHA-256.
+      - name: Clippy
+        run: cargo clippy -p rtm-kokoro -p rtm-bin --features rtm-bin/kokoro --all-targets --locked -- -D warnings
+      - name: Test
+        # The real-model test is ignored here: it needs the model files.
+        run: cargo test -p rtm-kokoro -p rtm-bin --features rtm-bin/kokoro --locked
 
   deny:
     name: Licences and advisories (cargo-deny)
