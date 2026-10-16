@@ -2356,6 +2356,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtm-narrate"
+version = "0.1.0"
+dependencies = [
+ "rtm-article",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "rtm-pipeline"
 version = "0.1.0"
 dependencies = [
