@@ -19,7 +19,7 @@ x-hardening: &hardening
 services:
   rtm:
     <<: *hardening
-    image: ${RTM_IMAGE:-ghcr.io/huwd/read-to-me-server/rtm:edge}
+    image: ${RTM_IMAGE:-read-to-me-rtm:local}
     build:
       context: .
       target: rtm
@@ -40,7 +40,7 @@ services:
 
   tts:
     <<: *hardening
-    image: ${RTM_TTS_IMAGE:-ghcr.io/huwd/read-to-me-server/tts:edge}
+    image: ${RTM_TTS_IMAGE:-read-to-me-tts:local}
     build:
       context: .
       target: tts
