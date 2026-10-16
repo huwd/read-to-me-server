@@ -2375,6 +2375,7 @@ dependencies = [
  "rtm-domain",
  "rtm-extract",
  "rtm-fetch",
+ "rtm-narrate",
  "rtm-ports",
  "rtm-store",
  "serde_json",

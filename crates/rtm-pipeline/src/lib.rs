@@ -6,6 +6,7 @@
 
 mod extract;
 mod fetch;
+mod script;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -18,6 +19,7 @@ use tokio::sync::watch;
 
 pub use extract::{ExtractConfig, ExtractStage};
 pub use fetch::FetchStage;
+pub use script::{DEFAULT_MAX_WORDS, ScriptStage};
 
 /// Why a stage failed: the code decides retry or terminal; the message is shown to the
 /// user, so it must not carry internal detail.
