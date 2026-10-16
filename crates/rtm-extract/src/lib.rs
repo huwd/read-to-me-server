@@ -8,7 +8,9 @@
 mod blocks;
 mod decode;
 mod extractors;
+pub mod protocol;
 mod triage;
+pub mod worker;
 
 use rtm_article::Article;
 use rtm_domain::SourceKind;

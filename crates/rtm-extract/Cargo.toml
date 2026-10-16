@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 dom_smoothie = "0.18.2"
 encoding_rs = "0.8.42"
+rlimit = "0.11.0"
 rtm-article = { version = "0.1.0", path = "../rtm-article" }
 rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
 scraper = "0.25.0"
