@@ -2617,6 +2617,7 @@ dependencies = [
  "rtm-domain",
  "rtm-extract",
  "rtm-fetch",
+ "rtm-kokoro",
  "rtm-narrate",
  "rtm-pipeline",
  "rtm-ports",
