@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rtm_domain::BlobKey;
+use rtm_domain::{BlobKey, Source};
 
 /// What a blob holds. Each kind has its own directory and key derivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,14 +48,25 @@ pub fn source_key(bytes: &[u8], owner_salt: &[u8]) -> BlobKey {
     derive(BlobKind::Source, &[bytes, owner_salt])
 }
 
-/// The key for an extracted article (ADR-0008): the source it came from, the extractor
-/// that made it (`id@version`) and the `Article` schema version. Bumping either version
-/// gives new keys, so stale results are never reused.
-pub fn article_key(source: &BlobKey, extractor: &str, schema_version: u32) -> BlobKey {
+/// The key for an extracted article (ADR-0008, Amendment 1): everything extraction
+/// reads, so the key identifies the whole output. That is the source bytes (via its
+/// key), where it was found (the URL feeds derived titles and canonical URLs), its kind
+/// and declared charset (which change how the bytes decode), the extractor that ran
+/// (`id@version`) and the `Article` schema version. Bumping either version gives new
+/// keys, so stale results are never reused.
+pub fn article_key(source: &Source, extractor: &str, schema_version: u32) -> BlobKey {
+    // Absent and empty charsets must differ, so the field carries a presence tag.
+    let charset = match &source.charset {
+        Some(c) => [b"\x01", c.as_bytes()].concat(),
+        None => b"\x00".to_vec(),
+    };
     derive(
         BlobKind::Article,
         &[
-            source.as_str().as_bytes(),
+            source.key.as_str().as_bytes(),
+            source.final_url.as_bytes(),
+            source.kind.as_str().as_bytes(),
+            &charset,
             extractor.as_bytes(),
             &schema_version.to_le_bytes(),
         ],
@@ -250,20 +261,85 @@ mod tests {
         assert!(deep.is_dir());
     }
 
+    fn source(bytes: &[u8]) -> Source {
+        Source {
+            key: source_key(bytes, b""),
+            final_url: "https://example.test/a".into(),
+            kind: rtm_domain::SourceKind::Html,
+            charset: Some("utf-8".into()),
+            size: bytes.len() as u64,
+        }
+    }
+
     #[test]
-    fn article_keys_change_with_every_version() {
-        let source = source_key(b"page", b"");
-        let k = |e: &str, v: u32| article_key(&source, e, v);
-        assert_eq!(k("generic-html@1", 1), k("generic-html@1", 1));
-        assert_ne!(k("generic-html@1", 1), k("generic-html@2", 1));
-        assert_ne!(k("generic-html@1", 1), k("readability@1", 1));
-        assert_ne!(k("generic-html@1", 1), k("generic-html@1", 2));
+    fn article_keys_cover_every_extraction_input() {
+        let base = source(b"page");
+        let k = |s: &Source, e: &str, v: u32| article_key(s, e, v);
+        let key = k(&base, "generic-html@1", 1);
+        assert_eq!(key, k(&base.clone(), "generic-html@1", 1));
+        // Versions.
+        assert_ne!(key, k(&base, "generic-html@2", 1));
+        assert_ne!(key, k(&base, "readability@1", 1));
+        assert_ne!(key, k(&base, "generic-html@1", 2));
+        // Source bytes and everything else extraction reads from the source.
+        let variants = [
+            source(b"other"),
+            Source {
+                final_url: "https://example.test/b".into(),
+                ..base.clone()
+            },
+            Source {
+                kind: rtm_domain::SourceKind::PlainText,
+                ..base.clone()
+            },
+            Source {
+                charset: Some("windows-1252".into()),
+                ..base.clone()
+            },
+            Source {
+                charset: None,
+                ..base.clone()
+            },
+            Source {
+                charset: Some(String::new()),
+                ..base.clone()
+            },
+        ];
+        for v in &variants {
+            assert_ne!(key, k(v, "generic-html@1", 1), "{v:?}");
+        }
         assert_ne!(
-            k("generic-html@1", 1),
-            article_key(&source_key(b"other", b""), "generic-html@1", 1)
+            k(
+                &Source {
+                    charset: None,
+                    ..base.clone()
+                },
+                "generic-html@1",
+                1
+            ),
+            k(
+                &Source {
+                    charset: Some(String::new()),
+                    ..base.clone()
+                },
+                "generic-html@1",
+                1
+            )
         );
-        // Different kinds never share keys, even over the same bytes.
-        assert_ne!(source.as_str(), k("", 0).as_str());
+        // The size is derived from the bytes, so it doesn't change the key.
+        assert_eq!(
+            key,
+            k(
+                &Source {
+                    size: 999,
+                    ..base.clone()
+                },
+                "generic-html@1",
+                1
+            )
+        );
+        // Different kinds never share keys.
+        assert_ne!(base.key.as_str(), key.as_str());
     }
 
     #[test]

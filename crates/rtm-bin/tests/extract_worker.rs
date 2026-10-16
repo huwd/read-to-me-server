@@ -191,3 +191,119 @@ async fn the_extract_stage_runs_the_real_worker() {
     assert_eq!(stored.title, record.title);
     assert_eq!(stored.word_count() as u64, record.words);
 }
+
+/// Extract `bytes` as fetched from `url` with `charset`, returning the item's record
+/// and the stored article.
+async fn extract_as(
+    bytes: &[u8],
+    url: &str,
+    kind: SourceKind,
+    charset: Option<&str>,
+    store: &Arc<Store>,
+    blobs: &BlobStore,
+) -> (rtm_domain::ArticleRecord, rtm_article::Article) {
+    let owner = UserId("owner".into());
+    let item = store.submit(&owner, url, 0).await.unwrap();
+    let key = blobs.put_source(bytes.to_vec(), b"").await.unwrap();
+    let job = store
+        .claim("f", &[Stage::Fetch], 1, 60_000)
+        .await
+        .unwrap()
+        .unwrap();
+    let source = Source {
+        key,
+        final_url: url.into(),
+        kind,
+        charset: charset.map(Into::into),
+        size: bytes.len() as u64,
+    };
+    store
+        .complete(&job, "f", StageOutput::Source(source), 2)
+        .await
+        .unwrap();
+    let stage = ExtractStage::new(
+        RTM,
+        vec![OsString::from("extract-worker")],
+        blobs.clone(),
+        ExtractConfig::default(),
+    );
+    let worker = Worker::new("x", Arc::clone(store), Arc::new(stage));
+    assert_eq!(
+        worker.run_once().await.unwrap(),
+        Turn::Completed(Stage::Extract)
+    );
+    let record = store
+        .get(&owner, item.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .article
+        .unwrap();
+    let stored =
+        serde_json::from_slice(&blobs.get(BlobKind::Article, &record.key).await.unwrap()).unwrap();
+    (record, stored)
+}
+
+/// Codex's reproduction on #36: identical bytes extracted under different source
+/// details must not share an article, or an item would record one extraction while
+/// pointing at another's.
+#[tokio::test]
+async fn identical_bytes_with_different_sources_get_their_own_articles() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(
+        Store::open(&dir.path().join("rtm.db"), QueuePolicy::default())
+            .await
+            .unwrap(),
+    );
+    let blobs = BlobStore::new(dir.path().join("blobs"));
+
+    // The same untitled text at two URLs: titles are derived from each URL.
+    let text = "word ".repeat(250).into_bytes();
+    let mut keys = Vec::new();
+    for (url, title) in [
+        (
+            "https://example.test/still-water-history",
+            "Still water history",
+        ),
+        (
+            "https://example.test/completely-different-title",
+            "Completely different title",
+        ),
+    ] {
+        let (record, stored) =
+            extract_as(&text, url, SourceKind::PlainText, None, &store, &blobs).await;
+        assert_eq!(record.title, title);
+        assert_eq!(
+            stored.title, title,
+            "stored article belongs to another item"
+        );
+        keys.push(record.key);
+    }
+
+    // The same bytes under two declared charsets decode differently.
+    let mut page = b"Cafe notes\n\n".to_vec();
+    for _ in 0..60 {
+        page.extend_from_slice(b"The caf\xe9 owner talks about the trade. ");
+    }
+    for (charset, expect) in [
+        (Some("windows-1252"), "café"),
+        (Some("utf-8"), "caf\u{FFFD}"),
+    ] {
+        let (record, stored) = extract_as(
+            &page,
+            "https://example.test/cafe-notes",
+            SourceKind::PlainText,
+            charset,
+            &store,
+            &blobs,
+        )
+        .await;
+        let body = serde_json::to_string(&stored.blocks).unwrap();
+        assert!(body.contains(expect), "{charset:?}: {body}");
+        keys.push(record.key);
+    }
+
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), 4, "articles shared a key");
+}

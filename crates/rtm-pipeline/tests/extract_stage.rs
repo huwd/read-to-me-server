@@ -160,7 +160,7 @@ async fn a_valid_article_is_cleaned_stored_and_recorded() {
     assert_eq!(
         record.key,
         rtm_blobs::article_key(
-            &item.source.unwrap().key,
+            &item.source.unwrap(),
             "generic-html@1",
             rtm_article::SCHEMA_VERSION
         )
