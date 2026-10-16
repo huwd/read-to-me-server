@@ -34,6 +34,9 @@ struct ItemView {
     /// Once extracted: what will be narrated.
     #[serde(skip_serializing_if = "Option::is_none")]
     article: Option<ArticleView>,
+    /// Once synthesised: the episode's length.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<u64>,
     status_url: String,
     created_at: String,
     updated_at: String,
@@ -97,6 +100,7 @@ impl From<Item> for ItemView {
             url: item.source_url,
             status: status(item.state),
             failure,
+            duration_seconds: item.speech.as_ref().map(|s| s.duration_ms.div_ceil(1000)),
             article: item.article.map(|a| ArticleView {
                 title: a.title,
                 words: a.words,
