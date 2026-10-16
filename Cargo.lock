@@ -2409,10 +2409,15 @@ name = "rtm-speech"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "bytes",
  "hound",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

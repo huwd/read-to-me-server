@@ -3,7 +3,9 @@
 //! implement, text segmentation, WAV audio, the HTTP protocol between the server and
 //! the `rtm tts` process, and a deterministic [`FakeEngine`] for tests and CI.
 
+pub mod client;
 mod fake;
+pub mod plan;
 pub mod protocol;
 pub mod segment;
 mod wav;
