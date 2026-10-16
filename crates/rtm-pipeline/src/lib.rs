@@ -36,8 +36,9 @@ pub type StageFuture<'a> =
 /// One pipeline stage, as run by a [`Worker`].
 pub trait StageRunner: Send + Sync {
     fn stage(&self) -> Stage;
-    /// How long a job is leased for: comfortably longer than the stage can take, so no
-    /// heartbeat is needed.
+    /// How long a job is leased for. The worker renews the lease every third of this
+    /// while the stage runs, so a long stage keeps its job and a crashed worker's job is
+    /// free again within one lease.
     fn lease(&self) -> Duration;
     fn run<'a>(&'a self, item: &'a Item) -> StageFuture<'a>;
 }
@@ -99,8 +100,40 @@ impl<S: ItemRepository + JobQueue + 'static> Worker<S> {
         let Some(item) = self.store.get(&job.user, job.item).await? else {
             return Ok(Turn::Abandoned);
         };
-        let result = self.run_stage(&job, &item).await;
+        let Some(result) = self.run_with_heartbeat(&job, &item).await else {
+            tracing::warn!(worker = %self.name, item = %item.id, "lease lost; abandoning the job");
+            return Ok(Turn::Abandoned);
+        };
         self.record(&job, result).await
+    }
+
+    /// Run the stage, renewing the lease every third of its length. `None` if the lease
+    /// was lost (the job is someone else's now), in which case the stage is dropped.
+    async fn run_with_heartbeat(
+        &self,
+        job: &Job,
+        item: &Item,
+    ) -> Option<Result<StageOutput, StageFailure>> {
+        let lease = self.runner.lease();
+        let mut beat = tokio::time::interval(lease / 3);
+        beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        beat.tick().await; // the first tick is immediate
+        let stage = self.run_stage(job, item);
+        tokio::pin!(stage);
+        loop {
+            tokio::select! {
+                result = &mut stage => return Some(result),
+                _ = beat.tick() => {
+                    match self.store.heartbeat(job, &self.name, now(), millis(lease)).await {
+                        Ok(_) => {}
+                        Err(StoreError::LeaseLost) => return None,
+                        // A failed renewal isn't fatal: the lease has two more thirds
+                        // to run, and the next beat tries again.
+                        Err(e) => tracing::warn!(worker = %self.name, error = %e, "heartbeat failed"),
+                    }
+                }
+            }
+        }
     }
 
     async fn run_stage(&self, job: &Job, item: &Item) -> Result<StageOutput, StageFailure> {
