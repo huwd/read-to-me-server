@@ -335,6 +335,16 @@ pub struct ScriptRecord {
     pub words: u64,
 }
 
+/// The synthesised speech for an item: a plan of audio segments and the pauses between
+/// them, which encoding assembles into one episode (FR-TTS-04).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeechRecord {
+    pub plan_key: BlobKey,
+    /// Total length, segments and pauses together.
+    pub duration_ms: u64,
+    pub segments: u64,
+}
+
 /// A submitted article and where it is in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -349,6 +359,8 @@ pub struct Item {
     pub article: Option<ArticleRecord>,
     /// Set once the script stage completes.
     pub script: Option<ScriptRecord>,
+    /// Set once the synthesise stage completes.
+    pub speech: Option<SpeechRecord>,
     pub created_at: Millis,
     pub updated_at: Millis,
 }

@@ -7,8 +7,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use rtm_domain::{
-    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, ScriptRecord, Source, Stage,
-    UserId,
+    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, ScriptRecord, Source,
+    SpeechRecord, Stage, UserId,
 };
 use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError, StoreResult};
 use sqlx::sqlite::{
@@ -100,7 +100,7 @@ macro_rules! select_items {
             "SELECT id, user_id, source_url, state, stage, failure_code, failure_message, \
              source_key, source_final_url, source_kind, source_charset, source_size, \
              article_key, extractor, title, title_derived, article_words, \
-             script_key, script_words, \
+             script_key, script_words, speech_plan_key, speech_duration_ms, speech_segments, \
              created_at, updated_at FROM items ",
             $tail
         )
@@ -157,6 +157,14 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         }),
         None => None,
     };
+    let speech = match row.get::<Option<&str>, _>("speech_plan_key") {
+        Some(key) => Some(SpeechRecord {
+            plan_key: parse(key)?,
+            duration_ms: u64::try_from(row.get::<i64, _>("speech_duration_ms")).map_err(storage)?,
+            segments: u64::try_from(row.get::<i64, _>("speech_segments")).map_err(storage)?,
+        }),
+        None => None,
+    };
     Ok(Item {
         id: parse(row.get::<&str, _>("id"))?,
         user: UserId(row.get("user_id")),
@@ -166,6 +174,7 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         source,
         article,
         script,
+        speech,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -298,6 +307,7 @@ impl ItemRepository for Store {
             source: None,
             article: None,
             script: None,
+            speech: None,
             created_at: now,
             updated_at: now,
         };
@@ -444,9 +454,16 @@ impl JobQueue for Store {
         match (job.stage, &output) {
             (Stage::Fetch, StageOutput::Source(_))
             | (Stage::Extract, StageOutput::Article(_))
-            | (Stage::Script, StageOutput::Script(_)) => {}
-            (Stage::Fetch | Stage::Extract | Stage::Script, _)
-            | (_, StageOutput::Source(_) | StageOutput::Article(_) | StageOutput::Script(_)) => {
+            | (Stage::Script, StageOutput::Script(_))
+            | (Stage::Synthesise, StageOutput::Speech(_)) => {}
+            (Stage::Fetch | Stage::Extract | Stage::Script | Stage::Synthesise, _)
+            | (
+                _,
+                StageOutput::Source(_)
+                | StageOutput::Article(_)
+                | StageOutput::Script(_)
+                | StageOutput::Speech(_),
+            ) => {
                 return Err(StoreError::WrongOutput { stage: job.stage });
             }
             (_, StageOutput::Nothing) => {}
@@ -496,6 +513,20 @@ impl JobQueue for Store {
                     .await
                     .map_err(storage)?;
                 item.script = Some(script);
+            }
+            StageOutput::Speech(speech) => {
+                sqlx::query(
+                    "UPDATE items SET speech_plan_key = ?, speech_duration_ms = ?, \
+                     speech_segments = ? WHERE id = ?",
+                )
+                .bind(speech.plan_key.as_str())
+                .bind(i64::try_from(speech.duration_ms).map_err(storage)?)
+                .bind(i64::try_from(speech.segments).map_err(storage)?)
+                .bind(item.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+                item.speech = Some(speech);
             }
             StageOutput::Nothing => {}
         }
