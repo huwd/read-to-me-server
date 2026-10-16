@@ -1,0 +1,71 @@
+{
+  "article": {
+    "blocks": [
+      {
+        "text": "Canals are among the oldest pieces of engineered infrastructure still in daily use. Their builders worked without modern surveying instruments, yet many of their routes remain hard to improve on today. This article looks at how they did it, and why it still matters for anyone who walks a towpath.",
+        "type": "paragraph"
+      },
+      {
+        "level": 2,
+        "text": "Locks and levels",
+        "type": "heading"
+      },
+      {
+        "text": "A lock is a simple machine: two gates, a chamber, and a way to let water in and out. The cleverness lies in where the locks are placed. Engineers grouped them into flights where the land fell steeply, and stretched long level pounds across gentler country so that boats could travel for miles without stopping.",
+        "type": "paragraph"
+      },
+      {
+        "items": [
+          "Staircase locks share gates between chambers.",
+          "Side ponds save water on busy flights.",
+          "Stop planks let a section be drained for repair."
+        ],
+        "ordered": false,
+        "type": "list"
+      },
+      {
+        "blocks": [
+          {
+            "text": "Water is patient, but it always finds the weakest seam in a puddled clay bank.",
+            "type": "paragraph"
+          }
+        ],
+        "type": "quote"
+      },
+      {
+        "level": 2,
+        "text": "Aqueducts and tunnels",
+        "type": "heading"
+      },
+      {
+        "text": "Where a valley could not be avoided, the canal was carried across it on an aqueduct. Early aqueducts were massive masonry structures lined with clay, heavy and prone to leaking. Later designs used cast-iron troughs, which were lighter and watertight, and allowed far more daring spans across rivers and roads.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Tunnels solved the opposite problem. Many had no towpath, so boats were legged through by men lying on planks and walking along the tunnel walls, a slow and dangerous job that persisted on some canals well into the twentieth century.",
+        "type": "paragraph"
+      },
+      {
+        "items": [
+          "Survey the route and its levels.",
+          "Cut the channel and puddle it with clay.",
+          "Build the locks, bridges and culverts."
+        ],
+        "ordered": true,
+        "type": "list"
+      },
+      {
+        "text": "Today the network is maintained largely for leisure, but the same principles apply. Every repair has to respect the levels set out two centuries ago, and every new marina has to find water without starving the summit pound that feeds the whole system.",
+        "type": "paragraph"
+      }
+    ],
+    "byline": "Ada Lovelock",
+    "canonical_url": "https://waterways.example/canals",
+    "lang": "en",
+    "published": "2026-03-14",
+    "site_name": "Waterways Weekly",
+    "title": "The Quiet Engineering of Canals"
+  },
+  "extractor": "generic-html@1",
+  "words": 306
+}

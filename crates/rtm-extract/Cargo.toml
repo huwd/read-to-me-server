@@ -1,0 +1,26 @@
+[package]
+name = "rtm-extract"
+version = "0.1.0"
+description = "Article extraction for read-to-me: the Article model, extractors and triage (ADR-0006)."
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dom_smoothie = "0.18.2"
+encoding_rs = "0.8.42"
+rtm-article = { version = "0.1.0", path = "../rtm-article" }
+rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
+scraper = "0.25.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+trafilatura = "0.3.0"
+url = "2.5.8"
+
+[dev-dependencies]
+serde_json = "1.0.154"

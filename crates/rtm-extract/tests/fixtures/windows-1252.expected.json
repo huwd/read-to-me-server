@@ -1,0 +1,46 @@
+{
+  "article": {
+    "blocks": [
+      {
+        "text": "Paragraph 1: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 2: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 3: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 4: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 5: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 6: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 7: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      },
+      {
+        "text": "Paragraph 8: the naïve résumé of a café owner — “quoted” — describes how the coffee trade changed the high street over a generation, and why the regulars still come back every morning before work.",
+        "type": "paragraph"
+      }
+    ],
+    "byline": null,
+    "canonical_url": "https://example.test/windows-1252.html",
+    "lang": "en",
+    "published": null,
+    "site_name": "example.test",
+    "title": "Café society"
+  },
+  "extractor": "generic-html@1",
+  "words": 282
+}
