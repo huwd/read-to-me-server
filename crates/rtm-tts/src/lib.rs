@@ -74,7 +74,10 @@ async fn synthesize(
             format!("no voice {:?}", request.voice),
         );
     };
-    let Ok(_turn) = tts.one_at_a_time.acquire().await else {
+    // An owned permit, moved into the blocking task: if the caller disconnects and this
+    // handler is dropped, the synthesis keeps running, so the permit must stay with it
+    // until it finishes or unwinds, not with the handler.
+    let Ok(turn) = Arc::clone(&tts.one_at_a_time).acquire_owned().await else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "SHUTTING_DOWN",
@@ -83,8 +86,11 @@ async fn synthesize(
     };
     let engine = Arc::clone(&tts.engine);
     let started = std::time::Instant::now();
-    let result =
-        tokio::task::spawn_blocking(move || engine.synthesize(&request.text, &request.voice)).await;
+    let result = tokio::task::spawn_blocking(move || {
+        let _turn = turn;
+        engine.synthesize(&request.text, &request.voice)
+    })
+    .await;
     match result {
         Ok(Ok(pcm)) => {
             tracing::info!(

@@ -142,7 +142,8 @@ impl SpeechEngine for Probe {
     fn synthesize(&self, text: &str, _: &str) -> Result<Pcm, SpeechError> {
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.most.fetch_max(now, Ordering::SeqCst);
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        let ms = if text == "slow" { 400 } else { 30 };
+        std::thread::sleep(std::time::Duration::from_millis(ms));
         self.running.fetch_sub(1, Ordering::SeqCst);
         match text {
             "panic" => panic!("engine bug"),
@@ -185,6 +186,31 @@ async fn one_synthesis_at_a_time_and_failures_are_contained() {
     // Still serving after a panic.
     let (status, _, _) = send(router, synth(r#"{"text":"ok","voice":"v"}"#)).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// Codex's reproduction on #39: a caller that disconnects mid-synthesis must not free
+/// the engine for another request while its synthesis is still running.
+#[tokio::test]
+async fn a_cancelled_request_still_holds_the_engine_until_synthesis_ends() {
+    let probe = Arc::new(Probe {
+        running: AtomicUsize::new(0),
+        most: AtomicUsize::new(0),
+    });
+    let router = rtm_tts::router(probe.clone());
+    let first = tokio::spawn(send(
+        router.clone(),
+        synth(r#"{"text":"slow","voice":"v"}"#),
+    ));
+    while probe.running.load(Ordering::SeqCst) == 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // The client goes away while the engine is busy.
+    first.abort();
+    let _ = first.await;
+
+    let (status, _, _) = send(router, synth(r#"{"text":"ok","voice":"v"}"#)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(probe.most.load(Ordering::SeqCst), 1, "syntheses overlapped");
 }
 
 async fn futures_join<F>(futures: Vec<F>) -> Vec<F::Output>
