@@ -13,18 +13,24 @@ workspace = true
 [dependencies]
 axum = "0.8"
 blake3 = "1.8.7"
+getrandom = "0.4.3"
+quick-xml = "0.42.0"
+rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
 rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
 rtm-ports = { version = "0.1.0", path = "../rtm-ports" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-time = { version = "0.3.55", features = ["formatting"] }
-tokio = { version = "1", features = ["net", "signal"] }
+time = { version = "0.3.55", features = ["formatting", "macros"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "signal"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
 tower-http = { version = "0.7.1", features = ["trace", "timeout"] }
 tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
+blake3 = "1.8.7"
 http-body-util = "0.1.5"
+roxmltree = "0.21.1"
 rtm-store = { version = "0.1.0", path = "../rtm-store" }
 serde_json = "1.0.154"
 tempfile = "3.27.0"
