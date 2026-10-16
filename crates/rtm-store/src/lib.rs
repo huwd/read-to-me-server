@@ -7,10 +7,13 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use rtm_domain::{
-    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, ScriptRecord, Source,
-    SpeechRecord, Stage, UserId,
+    ArticleRecord, EpisodeRecord, FailureCode, Item, ItemId, ItemState, Millis, ScriptRecord,
+    Source, SpeechRecord, Stage, UserId,
 };
-use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError, StoreResult};
+use rtm_ports::{
+    FailOutcome, Feed, FeedRepository, ItemRepository, Job, JobQueue, StageOutput, StoreError,
+    StoreResult,
+};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
     SqliteSynchronous,
@@ -101,6 +104,7 @@ macro_rules! select_items {
              source_key, source_final_url, source_kind, source_charset, source_size, \
              article_key, extractor, title, title_derived, article_words, \
              script_key, script_words, speech_plan_key, speech_duration_ms, speech_segments, \
+             episode_key, episode_bytes, episode_duration_ms, published_at, \
              created_at, updated_at FROM items ",
             $tail
         )
@@ -165,6 +169,15 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         }),
         None => None,
     };
+    let episode = match row.get::<Option<&str>, _>("episode_key") {
+        Some(key) => Some(EpisodeRecord {
+            key: parse(key)?,
+            bytes: u64::try_from(row.get::<i64, _>("episode_bytes")).map_err(storage)?,
+            duration_ms: u64::try_from(row.get::<i64, _>("episode_duration_ms"))
+                .map_err(storage)?,
+        }),
+        None => None,
+    };
     Ok(Item {
         id: parse(row.get::<&str, _>("id"))?,
         user: UserId(row.get("user_id")),
@@ -175,6 +188,8 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         article,
         script,
         speech,
+        episode,
+        published_at: row.get("published_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -308,6 +323,8 @@ impl ItemRepository for Store {
             article: None,
             script: None,
             speech: None,
+            episode: None,
+            published_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -455,18 +472,10 @@ impl JobQueue for Store {
             (Stage::Fetch, StageOutput::Source(_))
             | (Stage::Extract, StageOutput::Article(_))
             | (Stage::Script, StageOutput::Script(_))
-            | (Stage::Synthesise, StageOutput::Speech(_)) => {}
-            (Stage::Fetch | Stage::Extract | Stage::Script | Stage::Synthesise, _)
-            | (
-                _,
-                StageOutput::Source(_)
-                | StageOutput::Article(_)
-                | StageOutput::Script(_)
-                | StageOutput::Speech(_),
-            ) => {
-                return Err(StoreError::WrongOutput { stage: job.stage });
-            }
-            (_, StageOutput::Nothing) => {}
+            | (Stage::Synthesise, StageOutput::Speech(_))
+            | (Stage::Encode, StageOutput::Episode(_))
+            | (Stage::Publish, StageOutput::Nothing) => {}
+            _ => return Err(StoreError::WrongOutput { stage: job.stage }),
         }
         let mut tx = self.begin().await?;
         take_job(&mut tx, job, worker, now).await?;
@@ -528,10 +537,33 @@ impl JobQueue for Store {
                 .map_err(storage)?;
                 item.speech = Some(speech);
             }
+            StageOutput::Episode(episode) => {
+                sqlx::query(
+                    "UPDATE items SET episode_key = ?, episode_bytes = ?, episode_duration_ms = ? \
+                     WHERE id = ?",
+                )
+                .bind(episode.key.as_str())
+                .bind(i64::try_from(episode.bytes).map_err(storage)?)
+                .bind(i64::try_from(episode.duration_ms).map_err(storage)?)
+                .bind(item.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+                item.episode = Some(episode);
+            }
             StageOutput::Nothing => {}
         }
         let next = item.state.complete(job.stage)?;
         save_state(&mut tx, &mut item, next, None, now).await?;
+        if next == ItemState::Published {
+            sqlx::query("UPDATE items SET published_at = ? WHERE id = ?")
+                .bind(now)
+                .bind(item.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(storage)?;
+            item.published_at = Some(now);
+        }
         if let ItemState::Pending { next } = next {
             enqueue(&mut tx, &item, next, now).await?;
         }
@@ -580,5 +612,58 @@ impl JobQueue for Store {
         save_state(&mut tx, &mut item, failed, Some(message), now).await?;
         tx.commit().await.map_err(storage)?;
         Ok(FailOutcome::Failed)
+    }
+}
+
+impl FeedRepository for Store {
+    async fn set_feed_token(
+        &self,
+        user: &UserId,
+        token_hash: &str,
+        now: Millis,
+    ) -> StoreResult<Feed> {
+        // The guid is kept across rotations: it identifies the feed, not the token.
+        let row = sqlx::query(
+            "INSERT INTO feeds (user_id, token_hash, guid, created_at, rotated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?4) \
+             ON CONFLICT (user_id) DO UPDATE SET token_hash = ?2, rotated_at = ?4 \
+             RETURNING guid",
+        )
+        .bind(&user.0)
+        .bind(token_hash)
+        .bind(ItemId::new().to_string())
+        .bind(now)
+        .fetch_one(&self.write)
+        .await
+        .map_err(storage)?;
+        Ok(Feed {
+            user: user.clone(),
+            guid: row.get("guid"),
+        })
+    }
+
+    async fn feed_by_token(&self, token_hash: &str) -> StoreResult<Option<Feed>> {
+        let row = sqlx::query("SELECT user_id, guid FROM feeds WHERE token_hash = ?")
+            .bind(token_hash)
+            .fetch_optional(&self.read)
+            .await
+            .map_err(storage)?;
+        Ok(row.map(|r| Feed {
+            user: UserId(r.get("user_id")),
+            guid: r.get("guid"),
+        }))
+    }
+
+    async fn published(&self, user: &UserId, limit: u32) -> StoreResult<Vec<Item>> {
+        let rows = sqlx::query(select_items!(
+            "WHERE user_id = ? AND published_at IS NOT NULL \
+             ORDER BY published_at DESC, id DESC LIMIT ?"
+        ))
+        .bind(&user.0)
+        .bind(i64::from(limit))
+        .fetch_all(&self.read)
+        .await
+        .map_err(storage)?;
+        rows.iter().map(item_from_row).collect()
     }
 }

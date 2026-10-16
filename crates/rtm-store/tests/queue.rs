@@ -5,12 +5,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use rtm_domain::{FailureCode, ItemState, Stage, UserId};
-use rtm_ports::{FailOutcome, ItemRepository, JobQueue, StageOutput, StoreError};
+use rtm_ports::{FailOutcome, FeedRepository, ItemRepository, JobQueue, StageOutput, StoreError};
 use rtm_store::{QueuePolicy, Store};
 
 /// A plausible output for completing `job`: fetch records a source, extract an
 /// article, script a script,
-/// synthesise a speech plan; later stages record nothing yet.
+/// synthesise a speech plan,
+/// encode an episode; publish records nothing.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -35,6 +36,11 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
             plan_key: rtm_domain::BlobKey::from_hash([10; 32]),
             duration_ms: 480_000,
             segments: 12,
+        }),
+        rtm_domain::Stage::Encode => rtm_ports::StageOutput::Episode(rtm_domain::EpisodeRecord {
+            key: rtm_domain::BlobKey::from_hash([11; 32]),
+            bytes: 3_840_000,
+            duration_ms: 480_000,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }
@@ -870,4 +876,88 @@ async fn completing_extract_records_the_article() {
             next: Stage::Script
         }
     );
+}
+
+/// Walk an item through every stage at time `at`, publishing it.
+async fn publish(db: &Db, who: &str, url: &str, at: i64) -> rtm_domain::Item {
+    let item = db.store.submit(&user(who), url, at).await.unwrap();
+    for _ in Stage::ALL {
+        let job = db
+            .store
+            .claim("w", &Stage::ALL, at, LEASE)
+            .await
+            .unwrap()
+            .unwrap();
+        db.store
+            .complete(&job, "w", output_for(&job), at)
+            .await
+            .unwrap();
+    }
+    db.store.get(&user(who), item.id).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn published_items_are_listed_newest_first_per_user() {
+    let db = db().await;
+    let first = publish(&db, "ann", "https://example.org/1", 100).await;
+    let second = publish(&db, "ann", "https://example.org/2", 200).await;
+    publish(&db, "bob", "https://example.org/b", 300).await;
+    // Submitted but not published: not listed.
+    db.store
+        .submit(&user("ann"), "https://example.org/pending", 400)
+        .await
+        .unwrap();
+
+    assert_eq!(first.state, ItemState::Published);
+    assert_eq!(first.published_at, Some(100));
+    assert!(first.episode.is_some());
+
+    let ann = db.store.published(&user("ann"), 100).await.unwrap();
+    assert_eq!(
+        ann.iter().map(|i| i.id).collect::<Vec<_>>(),
+        [second.id, first.id]
+    );
+    assert_eq!(db.store.published(&user("ann"), 1).await.unwrap().len(), 1);
+    assert_eq!(
+        db.store.published(&user("bob"), 100).await.unwrap().len(),
+        1
+    );
+}
+
+// FR-FEED-05, AC-FEED-03
+#[tokio::test]
+async fn feed_tokens_rotate_and_keep_the_feed_guid() {
+    let db = db().await;
+    assert_eq!(db.store.feed_by_token("hash-1").await.unwrap(), None);
+    let feed = db
+        .store
+        .set_feed_token(&user("ann"), "hash-1", 10)
+        .await
+        .unwrap();
+    assert_eq!(feed.user, user("ann"));
+    assert_eq!(
+        db.store.feed_by_token("hash-1").await.unwrap(),
+        Some(feed.clone())
+    );
+
+    // Rotation: the old token stops working at once; the feed keeps its guid.
+    let rotated = db
+        .store
+        .set_feed_token(&user("ann"), "hash-2", 20)
+        .await
+        .unwrap();
+    assert_eq!(rotated.guid, feed.guid);
+    assert_eq!(db.store.feed_by_token("hash-1").await.unwrap(), None);
+    assert_eq!(
+        db.store.feed_by_token("hash-2").await.unwrap(),
+        Some(rotated)
+    );
+
+    // Each user has their own feed.
+    let bob = db
+        .store
+        .set_feed_token(&user("bob"), "hash-3", 30)
+        .await
+        .unwrap();
+    assert_ne!(bob.guid, feed.guid);
 }

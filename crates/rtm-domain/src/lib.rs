@@ -345,6 +345,14 @@ pub struct SpeechRecord {
     pub segments: u64,
 }
 
+/// The encoded episode: one MP3 (ADR-0009).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpisodeRecord {
+    pub key: BlobKey,
+    pub bytes: u64,
+    pub duration_ms: u64,
+}
+
 /// A submitted article and where it is in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -361,6 +369,10 @@ pub struct Item {
     pub script: Option<ScriptRecord>,
     /// Set once the synthesise stage completes.
     pub speech: Option<SpeechRecord>,
+    /// Set once the encode stage completes.
+    pub episode: Option<EpisodeRecord>,
+    /// When the item was published to the feed.
+    pub published_at: Option<Millis>,
     pub created_at: Millis,
     pub updated_at: Millis,
 }
