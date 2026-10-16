@@ -9,7 +9,7 @@ use rtm_ports::{FailOutcome, ItemRepository, JobQueue, StageOutput, StoreError};
 use rtm_store::{QueuePolicy, Store};
 
 /// A plausible output for completing `job`: fetch records a source, extract an
-/// article; later stages record nothing yet.
+/// article, script a script; later stages record nothing yet.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -25,6 +25,10 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
             title: "A title".into(),
             title_derived: false,
             words: 1234,
+        }),
+        rtm_domain::Stage::Script => rtm_ports::StageOutput::Script(rtm_domain::ScriptRecord {
+            key: rtm_domain::BlobKey::from_hash([9; 32]),
+            words: 1240,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }

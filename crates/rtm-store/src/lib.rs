@@ -7,7 +7,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use rtm_domain::{
-    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, Source, Stage, UserId,
+    ArticleRecord, FailureCode, Item, ItemId, ItemState, Millis, ScriptRecord, Source, Stage,
+    UserId,
 };
 use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError, StoreResult};
 use sqlx::sqlite::{
@@ -99,6 +100,7 @@ macro_rules! select_items {
             "SELECT id, user_id, source_url, state, stage, failure_code, failure_message, \
              source_key, source_final_url, source_kind, source_charset, source_size, \
              article_key, extractor, title, title_derived, article_words, \
+             script_key, script_words, \
              created_at, updated_at FROM items ",
             $tail
         )
@@ -148,6 +150,13 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         }),
         None => None,
     };
+    let script = match row.get::<Option<&str>, _>("script_key") {
+        Some(key) => Some(ScriptRecord {
+            key: parse(key)?,
+            words: u64::try_from(row.get::<i64, _>("script_words")).map_err(storage)?,
+        }),
+        None => None,
+    };
     Ok(Item {
         id: parse(row.get::<&str, _>("id"))?,
         user: UserId(row.get("user_id")),
@@ -156,6 +165,7 @@ fn item_from_row(row: &SqliteRow) -> StoreResult<Item> {
         failure_message: row.get("failure_message"),
         source,
         article,
+        script,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -287,6 +297,7 @@ impl ItemRepository for Store {
             failure_message: None,
             source: None,
             article: None,
+            script: None,
             created_at: now,
             updated_at: now,
         };
@@ -431,9 +442,11 @@ impl JobQueue for Store {
     ) -> StoreResult<Item> {
         // Each stage records exactly its own output.
         match (job.stage, &output) {
-            (Stage::Fetch, StageOutput::Source(_)) | (Stage::Extract, StageOutput::Article(_)) => {}
-            (Stage::Fetch | Stage::Extract, _)
-            | (_, StageOutput::Source(_) | StageOutput::Article(_)) => {
+            (Stage::Fetch, StageOutput::Source(_))
+            | (Stage::Extract, StageOutput::Article(_))
+            | (Stage::Script, StageOutput::Script(_)) => {}
+            (Stage::Fetch | Stage::Extract | Stage::Script, _)
+            | (_, StageOutput::Source(_) | StageOutput::Article(_) | StageOutput::Script(_)) => {
                 return Err(StoreError::WrongOutput { stage: job.stage });
             }
             (_, StageOutput::Nothing) => {}
@@ -473,6 +486,16 @@ impl JobQueue for Store {
             .await
             .map_err(storage)?;
                 item.article = Some(article);
+            }
+            StageOutput::Script(script) => {
+                sqlx::query("UPDATE items SET script_key = ?, script_words = ? WHERE id = ?")
+                    .bind(script.key.as_str())
+                    .bind(i64::try_from(script.words).map_err(storage)?)
+                    .bind(item.id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+                item.script = Some(script);
             }
             StageOutput::Nothing => {}
         }

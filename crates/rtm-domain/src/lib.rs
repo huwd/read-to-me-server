@@ -327,6 +327,14 @@ pub struct ArticleRecord {
     pub words: u64,
 }
 
+/// The narration script an item will be synthesised from (FR-TTS-01).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptRecord {
+    pub key: BlobKey,
+    /// Words to be spoken, including the title and intro.
+    pub words: u64,
+}
+
 /// A submitted article and where it is in the pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -339,6 +347,8 @@ pub struct Item {
     pub source: Option<Source>,
     /// Set once the extract stage completes.
     pub article: Option<ArticleRecord>,
+    /// Set once the script stage completes.
+    pub script: Option<ScriptRecord>,
     pub created_at: Millis,
     pub updated_at: Millis,
 }

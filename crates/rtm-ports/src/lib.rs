@@ -5,7 +5,8 @@
 use std::future::Future;
 
 use rtm_domain::{
-    ArticleRecord, FailureCode, Item, ItemId, Millis, Source, Stage, TransitionError, UserId,
+    ArticleRecord, FailureCode, Item, ItemId, Millis, ScriptRecord, Source, Stage, TransitionError,
+    UserId,
 };
 
 /// A claimed unit of work: run `stage` for `item`. Held under a lease until `lease_until`.
@@ -27,6 +28,8 @@ pub enum StageOutput {
     Source(Source),
     /// The extract stage's article, already written to the blob store.
     Article(ArticleRecord),
+    /// The script stage's narration script, already written to the blob store.
+    Script(ScriptRecord),
     /// Stages whose outputs aren't recorded yet.
     Nothing,
 }
