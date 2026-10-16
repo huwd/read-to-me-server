@@ -11,7 +11,8 @@ use rtm_ports::JobQueue;
 
 /// A plausible output for completing `job`: fetch records a source, extract an
 /// article, script a script,
-/// synthesise a speech plan; later stages record nothing yet.
+/// synthesise a speech plan,
+/// encode an episode; publish records nothing.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -36,6 +37,11 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
             plan_key: rtm_domain::BlobKey::from_hash([10; 32]),
             duration_ms: 480_000,
             segments: 12,
+        }),
+        rtm_domain::Stage::Encode => rtm_ports::StageOutput::Episode(rtm_domain::EpisodeRecord {
+            key: rtm_domain::BlobKey::from_hash([11; 32]),
+            bytes: 3_840_000,
+            duration_ms: 480_000,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }

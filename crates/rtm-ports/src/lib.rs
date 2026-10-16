@@ -5,8 +5,8 @@
 use std::future::Future;
 
 use rtm_domain::{
-    ArticleRecord, FailureCode, Item, ItemId, Millis, ScriptRecord, Source, SpeechRecord, Stage,
-    TransitionError, UserId,
+    ArticleRecord, EpisodeRecord, FailureCode, Item, ItemId, Millis, ScriptRecord, Source,
+    SpeechRecord, Stage, TransitionError, UserId,
 };
 
 /// A claimed unit of work: run `stage` for `item`. Held under a lease until `lease_until`.
@@ -32,6 +32,8 @@ pub enum StageOutput {
     Script(ScriptRecord),
     /// The synthesise stage's speech plan, already written to the blob store.
     Speech(SpeechRecord),
+    /// The encode stage's episode, already written to the blob store.
+    Episode(EpisodeRecord),
     /// Stages whose outputs aren't recorded yet.
     Nothing,
 }
@@ -79,6 +81,40 @@ pub trait ItemRepository: Send + Sync {
         user: &UserId,
         id: ItemId,
     ) -> impl Future<Output = StoreResult<Option<Item>>> + Send;
+}
+
+/// A user's private podcast feed (FR-FEED-01/05): reached by a capability token that is
+/// stored only as a hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Feed {
+    pub user: UserId,
+    /// Stable for the feed's life (`podcast:guid`), across token rotations.
+    pub guid: String,
+}
+
+/// Feeds and what they publish.
+pub trait FeedRepository: Send + Sync {
+    /// Set `user`'s feed token (by its hash), replacing any previous one, and return
+    /// the feed. The old token stops working at once.
+    fn set_feed_token(
+        &self,
+        user: &UserId,
+        token_hash: &str,
+        now: Millis,
+    ) -> impl Future<Output = StoreResult<Feed>> + Send;
+
+    /// The feed a token hash opens, if any.
+    fn feed_by_token(
+        &self,
+        token_hash: &str,
+    ) -> impl Future<Output = StoreResult<Option<Feed>>> + Send;
+
+    /// `user`'s published items, most recently published first, at most `limit`.
+    fn published(
+        &self,
+        user: &UserId,
+        limit: u32,
+    ) -> impl Future<Output = StoreResult<Vec<Item>>> + Send;
 }
 
 /// The durable job queue the pipeline workers pull from (ADR-0003).
