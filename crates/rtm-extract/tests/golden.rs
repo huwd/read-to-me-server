@@ -112,6 +112,26 @@ fn legacy_charset_from_meta() {
     );
 }
 
+/// Codex's reproductions, through `SourceDocument::text()`: whitespace around `=` in a
+/// `<meta charset>`, and a comment that mentions a charset before the real declaration.
+#[test]
+fn meta_charsets_are_read_as_html_declares_them() {
+    let page = |bytes: &[u8]| SourceDocument {
+        bytes: bytes.to_vec(),
+        kind: SourceKind::Html,
+        charset: None,
+        final_url: None,
+    };
+    let spaced = page(b"<meta charset = windows-1252><p>caf\xe9</p>");
+    assert_eq!(spaced.text(), "<meta charset = windows-1252><p>café</p>");
+    let commented = page("<!-- charset=windows-1252 --><meta charset=utf-8><p>café</p>".as_bytes());
+    assert!(
+        commented.text().ends_with("<p>café</p>"),
+        "{}",
+        commented.text()
+    );
+}
+
 #[test]
 fn plain_text() {
     let v = extracted(&doc("plain.txt", SourceKind::PlainText, None));
