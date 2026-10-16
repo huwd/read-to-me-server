@@ -30,6 +30,7 @@ All are drafted; see the [ADR index](adr/README.md) for status. Original backlog
 11. Observability: OTel + LGTM on the instance; alerts via ntfy/email; no phone-home telemetry.
 12. Client strategy (web UI + shortcuts / native wrappers around the web UI / fully native) — **deferred**, see [Q3](#q3).
 13. Secret scanner: Gitleaks vs Betterleaks — [proposed](adr/0013-secret-scanner.md).
+14. ✅ [Kokoro's pronunciation fork and native build](adr/0014-kokoro-dependencies-and-build.md): `misaki-rs` fork pinned by commit; Kokoro behind a `kokoro` cargo feature with its own CI job — accepted.
 
 ## 3. Open questions for you
 
