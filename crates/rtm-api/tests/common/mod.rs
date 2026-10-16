@@ -19,6 +19,7 @@ pub const TOKEN: &str = "test-token-0123456789-abcdefghijklmnop";
 pub struct App {
     pub router: Router,
     pub store: Arc<Store>,
+    pub blobs: rtm_blobs::BlobStore,
     _dir: tempfile::TempDir,
 }
 
@@ -30,9 +31,15 @@ pub async fn app() -> App {
             .unwrap(),
     );
     let auth = StaticToken::new(TOKEN, UserId("owner".into())).unwrap();
+    let blobs = rtm_blobs::BlobStore::new(dir.path().join("blobs"));
+    let feeds = rtm_api::FeedConfig {
+        blobs: blobs.clone(),
+        public_url: "https://rtm.example/".parse().unwrap(),
+    };
     App {
-        router: rtm_api::router(Arc::clone(&store), auth),
+        router: rtm_api::router(Arc::clone(&store), auth, feeds),
         store,
+        blobs,
         _dir: dir,
     }
 }

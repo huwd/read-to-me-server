@@ -58,11 +58,23 @@ async fn request_logs_never_contain_paths_or_queries() {
     .unwrap();
     request(&app, "/healthz?token=rtm_pat_SECRET").await;
     request(&app, "/feeds/rtm_feed_SECRET.xml").await;
+    request(
+        &app,
+        "/feeds/rtm_feed_SECRET/items/01a1444e-9fa9-77c0-9c37-85a1beabacd1.mp3",
+    )
+    .await;
+    request(&app, "/nowhere/rtm_pat_SECRET").await;
     request(&app, &format!("/v1/items/{}?SECRET", item.id)).await;
 
     let logs = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains(r#"route="/healthz""#), "{logs}");
     assert!(logs.contains(r#"route="unmatched""#), "{logs}");
+    // Feed tokens are capabilities in the path: only the route pattern is logged.
+    assert!(logs.contains(r#"route="/feeds/{file}""#), "{logs}");
+    assert!(
+        logs.contains(r#"route="/feeds/{token}/items/{file}""#),
+        "{logs}"
+    );
     assert!(logs.contains(r#"route="/v1/items/{id}""#), "{logs}");
     assert!(!logs.contains("SECRET"), "token leaked into logs:\n{logs}");
     assert!(
