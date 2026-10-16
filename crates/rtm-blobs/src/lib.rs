@@ -19,6 +19,8 @@ pub enum BlobKind {
     Source,
     Article,
     Script,
+    Segment,
+    Plan,
 }
 
 impl BlobKind {
@@ -27,6 +29,8 @@ impl BlobKind {
             BlobKind::Source => "source",
             BlobKind::Article => "article",
             BlobKind::Script => "script",
+            BlobKind::Segment => "segment",
+            BlobKind::Plan => "plan",
         }
     }
 }
@@ -85,6 +89,33 @@ pub fn script_key(article: &BlobKey, narrator_version: u32, options: &[u8]) -> B
             article.as_str().as_bytes(),
             &narrator_version.to_le_bytes(),
             options,
+        ],
+    )
+}
+
+/// The key for a synthesised audio segment (ADR-0008): everything synthesis reads. That
+/// is the piece's text, its language, and the engine's fingerprint for the voice, which
+/// covers the engine version, model and voice-file hashes and synthesis parameters.
+pub fn segment_key(text: &str, lang: &str, engine_fingerprint: &str) -> BlobKey {
+    derive(
+        BlobKind::Segment,
+        &[
+            text.as_bytes(),
+            lang.as_bytes(),
+            engine_fingerprint.as_bytes(),
+        ],
+    )
+}
+
+/// The key for a speech plan: the script it voices, the engine fingerprint, and the
+/// planning parameters (piece size, pauses) in canonical serialised form.
+pub fn plan_key(script: &BlobKey, engine_fingerprint: &str, params: &[u8]) -> BlobKey {
+    derive(
+        BlobKind::Plan,
+        &[
+            script.as_str().as_bytes(),
+            engine_fingerprint.as_bytes(),
+            params,
         ],
     )
 }
