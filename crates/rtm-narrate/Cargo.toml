@@ -14,6 +14,7 @@ workspace = true
 rtm-article = { version = "0.1.0", path = "../rtm-article" }
 serde = { version = "1.0.229", features = ["derive"] }
 unicode-normalization = "0.1.25"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["emoji"] }
 
 [dev-dependencies]
 serde_json = "1.0.154"

@@ -4,18 +4,48 @@
 //! quotes and dashes made plain, whitespace collapsed.
 
 use unicode_normalization::UnicodeNormalization;
+use unicode_properties::{EmojiStatus, UnicodeEmoji};
 
-/// Pictographic and emoji characters (and their joiners and modifiers), which a speech
-/// engine would either skip or read as noise.
-fn is_pictograph(c: char) -> bool {
-    matches!(c as u32,
-        0x1F000..=0x1FAFF   // mahjong, cards, emoji, pictographs, skin tones
-        | 0x2600..=0x27BF   // miscellaneous symbols, dingbats
-        | 0x2B00..=0x2BFF   // arrows and symbols
-        | 0xFE00..=0xFE0F   // variation selectors
-        | 0x200D            // zero-width joiner
-        | 0xE0020..=0xE007F // tag characters (flags)
-        | 0x20E3) // combining keycap
+/// Emoji variation selector 16: "show the previous character as emoji".
+const EMOJI_SELECTOR: char = '\u{FE0F}';
+
+/// Characters that only exist to build emoji sequences: variation selectors, the
+/// zero-width joiner, the combining keycap and tag characters (subdivision flags).
+fn is_emoji_glue(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FE0E}' | '\u{FE0F}' | '\u{200D}' | '\u{20E3}' | '\u{E0020}'..='\u{E007F}'
+    )
+}
+
+/// Remove emoji, keeping text symbols that carry meaning (♯, ♭, ✕, ©, ™, digits).
+///
+/// By Unicode emoji properties, not by block: a character goes if it is shown as emoji
+/// by default (`Emoji_Presentation`, which also covers skin tones and flag letters), or
+/// if a text-default emoji character is followed by the emoji selector (U+FE0F), like
+/// "❤️" — except a keycap base ("1️⃣" keeps its "1"). Sequence glue goes too.
+fn strip_emoji(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, &c) in chars.iter().enumerate() {
+        if is_emoji_glue(c) {
+            continue;
+        }
+        let shown_as_emoji = matches!(
+            c.emoji_status(),
+            EmojiStatus::EmojiPresentation
+                | EmojiStatus::EmojiPresentationAndModifierBase
+                | EmojiStatus::EmojiPresentationAndEmojiComponent
+                | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+        );
+        let keycap_base = c.is_ascii_digit() || matches!(c, '#' | '*');
+        let selected_as_emoji =
+            c.is_emoji_char() && !keycap_base && chars.get(i + 1) == Some(&EMOJI_SELECTOR);
+        if !(shown_as_emoji || selected_as_emoji) {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The domain of a URL-like token ("https://www.example.org/a/b?c" → "example.org"),
@@ -42,9 +72,8 @@ fn url_domain(token: &str) -> Option<String> {
 /// Text as it should be handed to the speech engine.
 pub fn speakable(text: &str) -> String {
     let nfc: String = text.nfc().collect();
-    let plain: String = nfc
+    let plain: String = strip_emoji(&nfc)
         .chars()
-        .filter(|c| !is_pictograph(*c))
         .map(|c| match c {
             '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{2032}' => '\'',
             '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{2033}' => '"',
@@ -85,6 +114,48 @@ mod tests {
         assert_eq!(speakable("Great news 🎉🎉 today 👍🏽!"), "Great news today !");
         assert_eq!(speakable("Flag 🇬🇧 and family 👨‍👩‍👧"), "Flag and family");
         assert_eq!(speakable("Keycap 1️⃣ done"), "Keycap 1 done");
+        assert_eq!(
+            speakable("Scotland 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} wins"),
+            "Scotland wins"
+        );
+        assert_eq!(
+            speakable("Rainbow 🏳\u{FE0F}\u{200D}🌈 flag"),
+            "Rainbow flag"
+        );
+        assert_eq!(speakable("# hashtag *star*"), "# hashtag *star*");
+    }
+
+    /// Codex's reproductions on #38: text symbols near emoji in the code space carry
+    /// meaning and must reach the normaliser intact.
+    #[test]
+    fn meaningful_symbols_are_kept() {
+        assert_eq!(speakable("6✕7=42"), "6✕7=42");
+        assert_eq!(
+            speakable("The piece is in C♯ minor."),
+            "The piece is in C♯ minor."
+        );
+        assert_eq!(
+            speakable("Use ♭ to lower the note."),
+            "Use ♭ to lower the note."
+        );
+        for kept in [
+            "© 2026",
+            "Brand™",
+            "→ next",
+            "★★★",
+            "☐ to do",
+            "x² ≤ 4",
+            "♠ ♥",
+            "№ 5",
+        ] {
+            assert_eq!(speakable(kept), kept);
+        }
+        // A text-default symbol becomes emoji only when the selector asks for it.
+        assert_eq!(speakable("I ❤ it"), "I ❤ it");
+        assert_eq!(speakable("I ❤\u{FE0F} it"), "I it");
+        assert_eq!(speakable("Done ✔\u{FE0F}"), "Done");
+        // Text presentation is kept, minus the selector.
+        assert_eq!(speakable("Phone ☎\u{FE0E}"), "Phone ☎");
     }
 
     #[test]
