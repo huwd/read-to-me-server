@@ -11,6 +11,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+hound = "3.5.1"
 rtm-article = { version = "0.1.0", path = "../rtm-article" }
 rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
 rtm-domain = { version = "0.1.0", path = "../rtm-domain" }
