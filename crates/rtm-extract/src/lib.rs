@@ -15,7 +15,7 @@ use rtm_domain::SourceKind;
 use url::Url;
 
 pub use extractors::{PlainText, Readability, Trafilatura};
-pub use triage::{Extraction, Failure, Registry, TriageConfig};
+pub use triage::{Extraction, Failure, Registry, TriageConfig, fallback_title};
 
 /// A fetched document. Never trusted.
 #[derive(Debug, Clone)]
