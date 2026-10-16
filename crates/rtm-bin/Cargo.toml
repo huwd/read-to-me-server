@@ -14,7 +14,13 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+# The Kokoro speech engine (ADR-0014): needs cmake and libclang to build, and downloads
+# ONNX Runtime. On in release images; off by default so ordinary builds stay light.
+kokoro = ["dep:rtm-kokoro"]
+
 [dependencies]
+rtm-kokoro = { version = "0.1.0", path = "../rtm-kokoro", optional = true }
 axum = "0.8"
 ipnet = "2.12.2"
 rtm-api = { version = "0.1.0", path = "../rtm-api" }

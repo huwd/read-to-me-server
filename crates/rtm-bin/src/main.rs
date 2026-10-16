@@ -53,8 +53,10 @@ environment:
 tts environment:
   RTM_TTS_LISTEN_ADDR      address to listen on (default 127.0.0.1:8090); keep it
                            on an internal network: it has no authentication
-  RTM_TTS_ENGINE           the speech engine (required): fake, a test engine that
-                           makes tones, not speech";
+  RTM_TTS_ENGINE           the speech engine (required): kokoro (in builds with the
+                           kokoro feature), or fake, a test engine that makes tones
+  RTM_KOKORO_DIR           Kokoro model files (fetch with `cargo xtask kokoro-models`)
+  RTM_KOKORO_THREADS       inference threads (default: all cores)";
 
 /// How long shutdown waits for in-flight fetches (each is capped at 30 s).
 const WORKER_DRAIN: Duration = Duration::from_secs(35);
@@ -300,14 +302,48 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
 
 const DEFAULT_TTS_LISTEN_ADDR: &str = "127.0.0.1:8090";
 
+/// The engines this build has.
+const ENGINES: &str = if cfg!(feature = "kokoro") {
+    "kokoro, fake"
+} else {
+    "fake; kokoro needs a build with the kokoro feature"
+};
+
+/// The Kokoro engine, from RTM_KOKORO_DIR, checked against its pinned hashes.
+#[cfg(feature = "kokoro")]
+fn kokoro_engine() -> Result<Arc<dyn rtm_speech::SpeechEngine>, String> {
+    let dir = std::env::var_os("RTM_KOKORO_DIR")
+        .ok_or("RTM_KOKORO_DIR is not set: point it at the Kokoro model files")?;
+    let threads = match std::env::var("RTM_KOKORO_THREADS") {
+        Err(_) => std::thread::available_parallelism().map_or(4, |n| n.get()),
+        Ok(n) => n
+            .trim()
+            .parse()
+            .ok()
+            .filter(|n| *n >= 1)
+            .ok_or_else(|| format!("RTM_KOKORO_THREADS={n:?}: expected a positive number"))?,
+    };
+    let started = std::time::Instant::now();
+    let engine = rtm_kokoro::KokoroEngine::load(std::path::Path::new(&dir), threads)
+        .map_err(|e| format!("loading Kokoro: {e}"))?;
+    tracing::info!(
+        threads,
+        took_ms = started.elapsed().as_millis() as u64,
+        "Kokoro loaded"
+    );
+    Ok(Arc::new(engine))
+}
+
 /// The engine named by RTM_TTS_ENGINE.
 fn tts_engine() -> Result<Arc<dyn rtm_speech::SpeechEngine>, String> {
     match std::env::var("RTM_TTS_ENGINE").as_deref() {
         Ok("fake") => Ok(Arc::new(rtm_speech::FakeEngine)),
+        #[cfg(feature = "kokoro")]
+        Ok("kokoro") => kokoro_engine(),
         Ok(other) => Err(format!(
-            "RTM_TTS_ENGINE={other:?}: unknown engine (available: fake)"
+            "RTM_TTS_ENGINE={other:?}: unknown engine (available: {ENGINES})"
         )),
-        Err(_) => Err("RTM_TTS_ENGINE is not set (available: fake)".into()),
+        Err(_) => Err(format!("RTM_TTS_ENGINE is not set (available: {ENGINES})")),
     }
 }
 
