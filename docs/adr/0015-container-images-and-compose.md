@@ -29,7 +29,7 @@ Two parts of the system don't fit a minimal image without a decision.
 ### Two images from one Dockerfile
 - **`rtm`** (the default target) has the server, the extract worker (the same binary, [ADR-0006](0006-extractor-triage-contract.md)) and ffmpeg. It's built without the `kokoro` feature: it talks to the TTS process over HTTP.
 - **`tts`** has `rtm` built with `--features kokoro` ([ADR-0014](0014-kokoro-dependencies-and-build.md)), running `rtm tts`.
-- **Both run on `gcr.io/distroless/cc-debian13:nonroot`:** glibc and libstdc++, which ONNX Runtime needs, but no shell or package manager. They run as the `nonroot` user.
+- **Both run on `gcr.io/distroless/cc-debian13:nonroot`:** glibc and libstdc++, which ONNX Runtime needs, but no shell or package manager. They run as `nonroot`, by numeric ID (`65532`) so orchestrators can verify it isn't root.
 - **Base images are pinned by multi-arch index digest** in the `FROM` lines, and Dependabot keeps them current.
 - **The Rust build uses `cargo-chef`,** so dependencies are cached in their own layer.
 - **The build context is an allowlist** (`.dockerignore`): only the workspace sources. Local data, model files and the spike's corpus can't leak in.

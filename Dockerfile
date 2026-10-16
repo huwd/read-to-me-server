@@ -100,7 +100,7 @@ COPY --from=models /models /models
 ENV RTM_TTS_ENGINE=kokoro \
     RTM_KOKORO_DIR=/models \
     RTM_TTS_LISTEN_ADDR=0.0.0.0:8090
-USER nonroot
+USER 65532:65532
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s \
   CMD ["/usr/local/bin/rtm", "healthcheck", "127.0.0.1:8090"]
@@ -115,11 +115,11 @@ LABEL org.opencontainers.image.title="read-to-me" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 COPY --from=ffmpeg /out/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=build-rtm /out/rtm /usr/local/bin/rtm
-COPY --from=build-rtm --chown=nonroot:nonroot /out/data /data
+COPY --from=build-rtm --chown=65532:65532 /out/data /data
 ENV RTM_DATA_DIR=/data \
     RTM_LISTEN_ADDR=0.0.0.0:8080 \
     RTM_FFMPEG=/usr/local/bin/ffmpeg
-USER nonroot
+USER 65532:65532
 VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s \
