@@ -133,6 +133,23 @@ The licences of the software and the models don't restrict the generated audio, 
 - ONNX Runtime (MIT) is a native dependency of the TTS image and is listed in `THIRD_PARTY_LICENSES`.
 - [ADR-0003](0003-sqlite-datastore-and-queue.md) replaces PostgreSQL with SQLite, bundled through `libsqlite3-sys` (MIT). SQLite itself is public domain, which is compatible. PostgreSQL drops out of [§4](#4-separately-distributed-programs-bundled-in-images-not-linked).
 
+## Amendment 3 (2026-10-16): WTFPL for `language-tokenizer` only
+
+The Kokoro engine's pronunciation library, our `misaki-rs` fork ([ADR-0014](0014-kokoro-dependencies-and-build.md)), depends on `language-tokenizer` 0.1.0, a small text tokenizer licensed under the **WTFPL v2**, which the allow-list rejects.
+
+**About the licence:**
+- It grants everything (use, modify, redistribute, relicense) with no conditions, not even attribution.
+- The FSF lists it as a free licence **compatible with the GPL family**, so it imposes nothing on our AGPL-3.0-or-later distribution.
+- It is **not OSI-approved**, and it has **no warranty disclaimer**. That's why cautious policies avoid it: its legal effect is untested, and an OSI-only redistribution policy would flag it.
+
+**Decision:**
+- Allow WTFPL **for `language-tokenizer` only**, through a crate-scoped exception in [`deny.toml`](../../deny.toml) that references this amendment.
+- **WTFPL stays off the allow-list.** Any other WTFPL dependency is still rejected and needs its own review.
+
+**Consequences:**
+- It's only in builds with the `kokoro` feature ([ADR-0014](0014-kokoro-dependencies-and-build.md)), which includes release images, so it appears in their `THIRD_PARTY_LICENSES` ([F4](#f4)).
+- If a redistributor needs an OSI-only bill of materials, the alternative is to replace the tokenizer in our fork. That's a behaviour change to verify with the pronunciation parity tests ([#18](https://github.com/huwd/read-to-me-server/issues/18)).
+
 ## Follow-ups
 
 | ID | Action | Owner |
