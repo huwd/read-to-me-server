@@ -7,7 +7,11 @@ use rtm_fetch::{Kind, SafeFetcher};
 use rtm_ports::StageOutput;
 use url::Url;
 
-use crate::StageFailure;
+use std::time::Duration;
+
+use rtm_domain::Stage;
+
+use crate::{StageFailure, StageFuture, StageRunner};
 
 pub struct FetchStage {
     fetcher: SafeFetcher,
@@ -19,7 +23,7 @@ impl FetchStage {
         Self { fetcher, blobs }
     }
 
-    pub async fn run(&self, item: &Item) -> Result<StageOutput, StageFailure> {
+    async fn fetch(&self, item: &Item) -> Result<StageOutput, StageFailure> {
         let url = Url::parse(&item.source_url).map_err(|_| StageFailure {
             code: FailureCode::Internal,
             message: "The stored URL could not be read.".into(),
@@ -55,5 +59,20 @@ impl FetchStage {
             charset: fetched.charset,
             size,
         }))
+    }
+}
+
+impl StageRunner for FetchStage {
+    fn stage(&self) -> Stage {
+        Stage::Fetch
+    }
+
+    /// Fetches are capped at 30 s.
+    fn lease(&self) -> Duration {
+        Duration::from_secs(120)
+    }
+
+    fn run<'a>(&'a self, item: &'a Item) -> StageFuture<'a> {
+        Box::pin(self.fetch(item))
     }
 }

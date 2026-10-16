@@ -4,8 +4,11 @@
 //! Stages are idempotent: their outputs are content-addressed blobs written before the
 //! job is completed, so a stage re-run after a crash writes the same keys again.
 
+mod extract;
 mod fetch;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,6 +16,7 @@ use rtm_domain::{FailureCode, Item, Millis, Stage};
 use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError};
 use tokio::sync::watch;
 
+pub use extract::{ExtractConfig, ExtractStage};
 pub use fetch::FetchStage;
 
 /// Why a stage failed: the code decides retry or terminal; the message is shown to the
@@ -23,9 +27,18 @@ pub struct StageFailure {
     pub message: String,
 }
 
-/// How long each job is leased for. Fetches finish within their 30 s timeout, so this
-/// leaves ample margin without heartbeats.
-pub const FETCH_LEASE: Duration = Duration::from_secs(120);
+/// The future a stage returns.
+pub type StageFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<StageOutput, StageFailure>> + Send + 'a>>;
+
+/// One pipeline stage, as run by a [`Worker`].
+pub trait StageRunner: Send + Sync {
+    fn stage(&self) -> Stage;
+    /// How long a job is leased for: comfortably longer than the stage can take, so no
+    /// heartbeat is needed.
+    fn lease(&self) -> Duration;
+    fn run<'a>(&'a self, item: &'a Item) -> StageFuture<'a>;
+}
 
 /// How long an idle worker waits before looking for work again.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -51,19 +64,19 @@ pub enum Turn {
     Abandoned,
 }
 
-/// A worker that runs the fetch stage.
+/// A worker that runs one stage's jobs.
 pub struct Worker<S> {
     name: String,
     store: Arc<S>,
-    fetch: Arc<FetchStage>,
+    runner: Arc<dyn StageRunner>,
 }
 
 impl<S: ItemRepository + JobQueue + 'static> Worker<S> {
-    pub fn new(name: impl Into<String>, store: Arc<S>, fetch: Arc<FetchStage>) -> Self {
+    pub fn new(name: impl Into<String>, store: Arc<S>, runner: Arc<dyn StageRunner>) -> Self {
         Self {
             name: name.into(),
             store,
-            fetch,
+            runner,
         }
     }
 
@@ -71,7 +84,12 @@ impl<S: ItemRepository + JobQueue + 'static> Worker<S> {
     pub async fn run_once(&self) -> Result<Turn, StoreError> {
         let Some(job) = self
             .store
-            .claim(&self.name, &[Stage::Fetch], now(), millis(FETCH_LEASE))
+            .claim(
+                &self.name,
+                &[self.runner.stage()],
+                now(),
+                millis(self.runner.lease()),
+            )
             .await?
         else {
             return Ok(Turn::Idle);
@@ -84,12 +102,13 @@ impl<S: ItemRepository + JobQueue + 'static> Worker<S> {
     }
 
     async fn run_stage(&self, job: &Job, item: &Item) -> Result<StageOutput, StageFailure> {
-        match job.stage {
-            Stage::Fetch => self.fetch.run(item).await,
-            other => Err(StageFailure {
+        if job.stage == self.runner.stage() {
+            self.runner.run(item).await
+        } else {
+            Err(StageFailure {
                 code: FailureCode::Internal,
-                message: format!("no handler for the {} stage", other.as_str()),
-            }),
+                message: format!("no handler for the {} stage", job.stage.as_str()),
+            })
         }
     }
 
