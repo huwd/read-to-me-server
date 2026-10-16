@@ -36,6 +36,7 @@ rtm-tts = { version = "0.1.0", path = "../rtm-tts" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+url = "2.5.8"
 
 [dev-dependencies]
 rtm-article = { version = "0.1.0", path = "../rtm-article" }
