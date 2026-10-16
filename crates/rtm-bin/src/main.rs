@@ -43,7 +43,12 @@ environment:
   RTM_MAX_WORDS            longest article narrated, in words (default 30000)
   RTM_TTS_URL              the rtm tts process (default http://127.0.0.1:8090)
   RTM_TTS_VOICE            narration voice (default bf_emma)
+  RTM_PUBLIC_URL           how podcast apps reach this server, for feed URLs, e.g.
+                           http://192.168.1.10:8080 (default: the listen address)
   RTM_FFMPEG               the ffmpeg binary (default: ffmpeg on PATH)
+
+  Get your feed URL (shown once; calling again rotates it):
+    curl -X POST -H \"Authorization: Bearer $RTM_STATIC_TOKEN\" <server>/v1/feed/token
   RTM_FETCH_IGNORE_ROBOTS  true to ignore robots.txt (\"disrespectful mode\");
                            same as --ignore-robots
   RTM_FETCH_DENY           extra address ranges never to fetch, comma-separated
@@ -165,6 +170,20 @@ fn ffmpeg() -> Result<PathBuf, String> {
         .ok_or_else(|| "ffmpeg isn't on PATH: install it or set RTM_FFMPEG".into())
 }
 
+/// RTM_PUBLIC_URL: how podcast apps reach this server, for absolute feed URLs.
+fn public_url(listen: SocketAddr) -> Result<url::Url, String> {
+    let raw = std::env::var("RTM_PUBLIC_URL").unwrap_or_else(|_| format!("http://{listen}"));
+    let url: url::Url = raw
+        .parse()
+        .map_err(|e| format!("RTM_PUBLIC_URL {raw:?} is not a URL: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(format!(
+            "RTM_PUBLIC_URL {raw:?}: expected http(s)://host[:port]"
+        ));
+    }
+    Ok(url)
+}
+
 /// RTM_MAX_WORDS: the longest article narrated (FR-TTS-06).
 fn max_words() -> Result<u64, String> {
     match std::env::var("RTM_MAX_WORDS") {
@@ -238,9 +257,9 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let config =
-        extract_worker_count().and_then(|n| Ok((n, max_words()?, tts_client()?, ffmpeg()?)));
-    let (extract_workers, max_words, tts, ffmpeg) = match config {
+    let config = extract_worker_count()
+        .and_then(|n| Ok((n, max_words()?, tts_client()?, ffmpeg()?, public_url(addr)?)));
+    let (extract_workers, max_words, tts, ffmpeg, public_url) = match config {
         Ok(config) => config,
         Err(e) => {
             tracing::error!(error = %e, "invalid configuration");
@@ -271,7 +290,7 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
     ));
     let publish_stage: Arc<dyn StageRunner> = Arc::new(PublishStage);
     let script_stage: Arc<dyn StageRunner> = Arc::new(ScriptStage::new(
-        blobs,
+        blobs.clone(),
         rtm_narrate::Options::default(),
         max_words,
     ));
@@ -304,7 +323,17 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
         }
     };
     tracing::info!(%addr, version = env!("CARGO_PKG_VERSION"), "rtm server listening");
-    let router = rtm_api::router(store, token);
+    if public_url
+        .host_str()
+        .is_some_and(|h| h == "127.0.0.1" || h == "localhost" || h == "::1")
+    {
+        tracing::warn!(
+            %public_url,
+            "RTM_PUBLIC_URL is a loopback address: podcast apps on other devices can't reach \
+             feed URLs; set it to how they reach this server"
+        );
+    }
+    let router = rtm_api::router(store, token, rtm_api::FeedConfig { blobs, public_url });
     let served = rtm_api::serve(listener, router, shutdown_signal()).await;
 
     // Stop claiming new jobs and let in-flight ones finish. Anything still running
