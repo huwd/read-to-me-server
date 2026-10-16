@@ -1,0 +1,59 @@
+# read-to-me: the server and its speech service (ADR-0015).
+#
+#   cp .env.example .env    # then set RTM_STATIC_TOKEN and RTM_PUBLIC_URL
+#   docker compose up -d
+#
+# Both containers run read-only, with every capability dropped and no privilege
+# escalation (docs/06 §2). The speech service sits on an internal network with no
+# route out: only the server can reach it, and it can reach nothing.
+
+name: read-to-me
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+
+services:
+  rtm:
+    <<: *hardening
+    image: ${RTM_IMAGE:-read-to-me-rtm:local}
+    build:
+      context: .
+      target: rtm
+    environment:
+      RTM_STATIC_TOKEN: ${RTM_STATIC_TOKEN:?set RTM_STATIC_TOKEN in .env}
+      RTM_PUBLIC_URL: ${RTM_PUBLIC_URL:-http://localhost:8080}
+      RTM_TTS_URL: http://tts:8090
+      RTM_TTS_VOICE: ${RTM_TTS_VOICE:-bf_emma}
+      RTM_LOG: ${RTM_LOG:-info}
+    ports:
+      - "${RTM_BIND:-127.0.0.1:8080}:8080"
+    volumes:
+      - rtm-data:/data
+    networks: [egress, speech]
+    depends_on:
+      tts:
+        condition: service_healthy
+
+  tts:
+    <<: *hardening
+    image: ${RTM_TTS_IMAGE:-read-to-me-tts:local}
+    build:
+      context: .
+      target: tts
+    environment:
+      RTM_LOG: ${RTM_LOG:-info}
+    networks: [speech]
+
+networks:
+  # The server fetches articles from the internet through its egress guard.
+  egress: {}
+  # Server ↔ speech only.
+  speech:
+    internal: true
+
+volumes:
+  rtm-data: {}

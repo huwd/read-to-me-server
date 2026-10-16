@@ -18,3 +18,4 @@ Format: [MADR](https://adr.github.io/madr/). One decision per file, numbered, ne
 | 0012 | Client strategy (web UI / native wrappers / native apps) | Deferred |
 | [0013](0013-secret-scanner.md) | Secret scanner: Gitleaks vs Betterleaks | Proposed |
 | [0014](0014-kokoro-dependencies-and-build.md) | Kokoro's pronunciation fork and native build | Accepted |
+| [0015](0015-container-images-and-compose.md) | Container images and the compose stack | Accepted |

@@ -4,9 +4,26 @@ Send a long-form article (URL, HTML or PDF) to your own server. It extracts the 
 
 > **Target:** self-hosted, for one person or a household. A public hosted service is not a goal; decisions that would affect one are flagged **⚑ Hosting impact** in the docs.
 
-> Status: **Phase 1 foundations.** A minimal server exists, with health endpoints only; no product features yet. Next milestone: the [walking skeleton](https://github.com/huwd/read-to-me-server/issues/12), a URL running end to end into the feed. See the roadmap in [doc 07](docs/07-roadmap-and-open-questions.md).
+> Status: **walking skeleton.** A URL runs end to end: fetched through the egress guard, extracted in a sandbox, narrated by Kokoro, encoded and published to a private feed, in containers. Accounts, a client app and observability come next ([issue #12](https://github.com/huwd/read-to-me-server/issues/12), [doc 07](docs/07-roadmap-and-open-questions.md)).
 
-## Running the server
+## Running with Docker Compose
+
+```sh
+cp .env.example .env          # set RTM_STATIC_TOKEN (openssl rand -hex 32) and RTM_PUBLIC_URL
+docker compose up -d          # builds and starts the server and the Kokoro speech service
+```
+
+Submit an article, then get your private feed URL and add it to a podcast app:
+
+```sh
+curl -H "Authorization: Bearer $RTM_STATIC_TOKEN" -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/article"}' localhost:8080/v1/items
+curl -X POST -H "Authorization: Bearer $RTM_STATIC_TOKEN" localhost:8080/v1/feed/token
+```
+
+The feed URL is shown once; asking again rotates it. Both containers run read-only, unprivileged and with every capability dropped; the speech service has no network route out ([ADR-0015](docs/adr/0015-container-images-and-compose.md)). The first start builds both images from source, which takes a while: the `tts` build compiles espeak-ng and downloads and verifies the Kokoro model files (about 330 MB).
+
+## Running from source
 
 ```sh
 cargo run --bin rtm -- server           # listens on 127.0.0.1:8080

@@ -1,0 +1,6 @@
+# Dockerfile lint (docs/05 §2.1).
+ignored:
+  # Pinning apt package versions: the base images are pinned by digest, these
+  # packages only appear in build stages, and Debian mirrors drop superseded
+  # versions, so exact pins would break builds without making them reproducible.
+  - DL3008

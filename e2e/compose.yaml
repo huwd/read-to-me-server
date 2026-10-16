@@ -1,0 +1,45 @@
+# End-to-end overlay (ADR-0015): `e2e/run.sh` layers this over ../compose.yaml.
+#
+# - Both services run the rtm image under test; speech comes from the fake engine,
+#   so no model or Kokoro build is needed.
+# - A fixture origin serves the article on a private network that the egress guard
+#   is told to allow, as an intranet would be (RTM_FETCH_UNSAFE_ALLOW).
+# - The server listens on a different host port from a real stack.
+
+services:
+  rtm:
+    image: ${RTM_E2E_IMAGE:-rtm:e2e}
+    build: !reset null
+    environment:
+      RTM_STATIC_TOKEN: e2e-static-token-0123456789abcdef0123456789
+      RTM_PUBLIC_URL: http://127.0.0.1:18080
+      RTM_FETCH_UNSAFE_ALLOW: 172.30.99.0/24
+    ports: !override
+      - "127.0.0.1:18080:8080"
+    networks: [egress, speech, origin]
+
+  tts:
+    image: ${RTM_E2E_IMAGE:-rtm:e2e}
+    build: !reset null
+    command: ["tts"]
+    environment:
+      RTM_TTS_ENGINE: fake
+      RTM_TTS_LISTEN_ADDR: 0.0.0.0:8090
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rtm", "healthcheck", "127.0.0.1:8090"]
+      interval: 2s
+      start_period: 5s
+
+  origin:
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    volumes:
+      - ./e2e/origin:/usr/share/nginx/html:ro
+    networks:
+      origin:
+        ipv4_address: 172.30.99.10
+
+networks:
+  origin:
+    ipam:
+      config:
+        - subnet: 172.30.99.0/24
