@@ -2241,6 +2241,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlimit"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rtm-api"
 version = "0.1.0"
 dependencies = [
@@ -2311,6 +2320,7 @@ version = "0.1.0"
 dependencies = [
  "dom_smoothie",
  "encoding_rs",
+ "rlimit",
  "rtm-article",
  "rtm-domain",
  "scraper",
