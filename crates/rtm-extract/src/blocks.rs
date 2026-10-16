@@ -10,6 +10,39 @@ const SKIP: &[&str] = &[
     "input", "select", "textarea", "nav", "aside", "footer",
 ];
 
+/// Elements that start a new line when rendered, so the text either side of them must
+/// not run together when flattened into one string.
+const BLOCK_LEVEL: &[&str] = &[
+    "p",
+    "div",
+    "li",
+    "ul",
+    "ol",
+    "dl",
+    "dt",
+    "dd",
+    "td",
+    "th",
+    "tr",
+    "table",
+    "caption",
+    "blockquote",
+    "pre",
+    "section",
+    "article",
+    "header",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "figure",
+    "figcaption",
+    "hr",
+    "address",
+];
+
 /// Whether a `<sup>` is a footnote or reference marker ("1", "23", "*", "†", "[4]"),
 /// which would otherwise be read aloud as part of the preceding word.
 fn is_reference_marker(text: &str) -> bool {
@@ -47,11 +80,16 @@ fn collect_inline(el: ElementRef<'_>, out: &mut String) {
                     out.push(' ');
                     continue;
                 }
-                // Block-level children inside an inline context still need separating.
-                if matches!(name, "p" | "div" | "li" | "td" | "th") {
+                // Block-level children inside an inline context (a list item or table
+                // cell) are separate runs of text: keep a space on both sides.
+                let block = BLOCK_LEVEL.contains(&name);
+                if block {
                     out.push(' ');
                 }
                 collect_inline(child, out);
+                if block {
+                    out.push(' ');
+                }
             }
             _ => {}
         }
@@ -261,6 +299,37 @@ mod tests {
         // little in narration ("mc", then the rest).
         assert_eq!(blocks[0], para("In 1914. Then more."));
         assert_eq!(blocks[1], para("E = mc and xn"));
+    }
+
+    #[test]
+    fn text_either_side_of_a_nested_block_stays_separate() {
+        let blocks = from_html("<ul><li><p>first</p><p>second</p>tail</li></ul>");
+        assert_eq!(
+            blocks,
+            vec![Block::List {
+                ordered: false,
+                items: vec!["first second tail".into()]
+            }]
+        );
+        let blocks = from_html("<ul><li>lead<ul><li>nested</li></ul>after</li></ul>");
+        assert_eq!(
+            blocks,
+            vec![Block::List {
+                ordered: false,
+                items: vec!["lead nested after".into()]
+            }]
+        );
+        let blocks = from_html("<table><tr><td><div>cell</div>note</td></tr></table>");
+        assert_eq!(
+            blocks,
+            vec![Block::Table {
+                caption: None,
+                rows: vec![vec!["cell note".into()]]
+            }]
+        );
+        // Inline elements still join without spaces.
+        let blocks = from_html("<p>un<em>believ</em>able</p>");
+        assert_eq!(blocks, vec![para("unbelievable")]);
     }
 
     #[test]
