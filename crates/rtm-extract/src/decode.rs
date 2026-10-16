@@ -101,6 +101,34 @@ fn meta_encoding(label: &str) -> Option<&'static Encoding> {
     })
 }
 
+/// Where scanning resumes after the byte at `at`. As in the WHATWG prescan, any other
+/// start or end tag is consumed whole, attributes and all, so nothing inside a quoted
+/// attribute value is ever mistaken for a declaration; `<!…>`, `</…>` and `<?…>` run to
+/// the next `>`.
+fn skip_markup(b: &[u8], at: usize) -> usize {
+    let rest = &b[at..];
+    let tag_start = match rest {
+        [b'<', c, ..] if c.is_ascii_alphabetic() => Some(at + 1),
+        [b'<', b'/', c, ..] if c.is_ascii_alphabetic() => Some(at + 2),
+        _ => None,
+    };
+    if let Some(mut i) = tag_start {
+        while i < b.len() && !is_space(b[i]) && !matches!(b[i], b'/' | b'>') {
+            i += 1; // the tag name
+        }
+        let mut attrs = Attrs { bytes: b, at: i };
+        while attrs.next().is_some() {}
+        return attrs.at + 1; // past the ">"
+    }
+    if matches!(rest, [b'<', b'!' | b'/' | b'?', ..]) {
+        return rest
+            .iter()
+            .position(|&c| c == b'>')
+            .map_or(b.len(), |p| at + p + 1);
+    }
+    at + 1
+}
+
 /// The charset declared by the first usable `<meta>` tag in the first 1024 bytes,
 /// skipping comments and declarations that name no known encoding.
 fn meta_charset(bytes: &[u8]) -> Option<&'static Encoding> {
@@ -120,7 +148,7 @@ fn meta_charset(bytes: &[u8]) -> Option<&'static Encoding> {
             && rest[..5].eq_ignore_ascii_case(b"<meta")
             && (is_space(rest[5]) || rest[5] == b'/');
         if !is_meta {
-            at += 1;
+            at = skip_markup(b, at);
             continue;
         }
         let mut attrs = Attrs {
@@ -214,6 +242,26 @@ mod tests {
         assert_eq!(sniffed(b"<p>charset=windows-1252</p>"), None);
         assert_eq!(sniffed(b"<metadata charset=koi8-r>"), None);
         assert_eq!(sniffed(b"<meta name=x content=\"charset=koi8-r\">"), None);
+        // Markup inside other tags' quoted attributes, and inside <!…>/<?…>, is skipped.
+        assert_eq!(
+            sniffed(b"<div title=\"<meta charset=windows-1252>\"></div><meta charset=utf-8>"),
+            Some("UTF-8")
+        );
+        assert_eq!(
+            sniffed(b"<a data-x='<meta charset=koi8-r>' href=/><meta charset=iso-8859-5>"),
+            Some("ISO-8859-5")
+        );
+        assert_eq!(
+            sniffed(b"<?xml x=\"<meta charset=koi8-r>\"?><meta charset=utf-8>"),
+            Some("UTF-8")
+        );
+        assert_eq!(
+            sniffed(b"</p title=\"<meta charset=koi8-r>\"><meta charset=utf-8>"),
+            Some("UTF-8")
+        );
+        // An unclosed tag or stray "<" doesn't hang or panic.
+        assert_eq!(sniffed(b"<div title=\"never closed"), None);
+        assert_eq!(sniffed(b"a < b <"), None);
         // An unknown label is skipped and the next declaration used.
         assert_eq!(
             sniffed(b"<meta charset=nonsense><meta charset=iso-8859-5>"),
@@ -237,5 +285,8 @@ mod tests {
         assert!(decode(spaced, None, true).ends_with("café</p>"));
         let commented = "<!-- charset=windows-1252 --><meta charset=utf-8><p>café</p>";
         assert!(decode(commented.as_bytes(), None, true).ends_with("café</p>"));
+        let quoted =
+            "<div title=\"<meta charset=windows-1252>\"></div><meta charset=utf-8><p>café</p>";
+        assert!(decode(quoted.as_bytes(), None, true).ends_with("café</p>"));
     }
 }
