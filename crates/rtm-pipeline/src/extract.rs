@@ -198,7 +198,7 @@ impl ExtractStage {
                     return Err(internal("The extractor returned an unusable article."));
                 }
                 let extractor = format!("{extractor}@{version}");
-                let key = article_key(&source.key, &extractor, SCHEMA_VERSION);
+                let key = article_key(source, &extractor, SCHEMA_VERSION);
                 let json = serde_json::to_vec(&article)
                     .map_err(|_| internal("Couldn't store the article."))?;
                 self.blobs
