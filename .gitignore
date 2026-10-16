@@ -5,3 +5,6 @@
 
 # Kokoro model files fetched by `cargo xtask kokoro-models` (never committed)
 /models/
+
+# Local compose configuration (copy .env.example)
+/.env
