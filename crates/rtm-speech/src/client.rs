@@ -73,6 +73,16 @@ impl TtsClient {
         })
     }
 
+    /// The `Host` header value. IPv6 literals need their brackets back (RFC 9110 §7.2,
+    /// RFC 3986 §3.2.2): `[::1]:8090`, not `::1:8090`.
+    fn authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+
     async fn send(
         &self,
         method: Method,
@@ -91,7 +101,7 @@ impl TtsClient {
             let mut request = Request::builder()
                 .method(method)
                 .uri(path)
-                .header(HOST, format!("{}:{}", self.host, self.port));
+                .header(HOST, self.authority());
             if body.is_some() {
                 request = request.header(CONTENT_TYPE, "application/json");
             }
@@ -172,6 +182,15 @@ mod tests {
         assert_eq!(ok("http://127.0.0.1:8090"), Ok(("127.0.0.1".into(), 8090)));
         assert_eq!(ok("http://tts:8090/"), Ok(("tts".into(), 8090)));
         assert_eq!(ok("http://[::1]:8090"), Ok(("::1".into(), 8090)));
+        let authority = |u: &str| {
+            TtsClient::new(u, Duration::from_secs(1))
+                .unwrap()
+                .authority()
+        };
+        assert_eq!(authority("http://[::1]:8090"), "[::1]:8090");
+        assert_eq!(authority("http://[fd00::5]:80/"), "[fd00::5]:80");
+        assert_eq!(authority("http://tts:8090"), "tts:8090");
+        assert_eq!(authority("http://10.0.0.2:8090"), "10.0.0.2:8090");
         for bad in [
             "https://tts:8090",
             "tts:8090",
@@ -182,5 +201,42 @@ mod tests {
         ] {
             assert!(ok(bad).is_err(), "{bad}");
         }
+    }
+}
+
+/// Against a real server on IPv6 loopback, checking the `Host` header it receives.
+#[cfg(test)]
+mod ipv6 {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_host_header_keeps_ipv6_brackets() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // Skip where the machine has no IPv6 loopback.
+        let Ok(listener) = tokio::net::TcpListener::bind("[::1]:0").await else {
+            return;
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0u8; 4096];
+            let n = stream.read(&mut request).await.unwrap();
+            let body = br#"{"engine":"x","sample_rate":1,"voices":[]}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).await.unwrap();
+            stream.write_all(body).await.unwrap();
+            String::from_utf8_lossy(&request[..n]).to_lowercase()
+        });
+        let client =
+            TtsClient::new(&format!("http://[::1]:{port}"), Duration::from_secs(5)).unwrap();
+        client.voices().await.unwrap();
+        let request = server.await.unwrap();
+        assert!(
+            request.contains(&format!("host: [::1]:{port}\r\n")),
+            "{request}"
+        );
     }
 }
