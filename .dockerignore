@@ -1,0 +1,11 @@
+# Allowlist: only what the image builds need. Keeps local data, model files, the
+# spike's corpus and build output out of the build context (ADR-0015).
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!clippy.toml
+!.cargo/
+!crates/
+!xtask/
+crates/**/target/

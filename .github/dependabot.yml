@@ -33,3 +33,28 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+
+  # Base images in the Dockerfile, and the e2e fixture origin's image.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker-compose
+    directory: /e2e
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: test
+      include: scope
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
