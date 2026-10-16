@@ -14,7 +14,7 @@ use rtm_api::StaticToken;
 use rtm_blobs::BlobStore;
 use rtm_domain::UserId;
 use rtm_fetch::SafeFetcher;
-use rtm_pipeline::{FetchStage, StageRunner, Worker};
+use rtm_pipeline::{ExtractConfig, ExtractStage, FetchStage, StageRunner, Worker};
 use rtm_store::{QueuePolicy, Store};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
@@ -24,6 +24,8 @@ usage: rtm <role> [options]
 
 roles:
   server [--ignore-robots]   HTTP API, workers and feed serving
+  extract-worker             sandboxed article extraction; started by the server,
+                             one document per run over stdin and stdout
 
 environment:
   RTM_STATIC_TOKEN         API bearer token, at least 32 characters (required;
@@ -32,6 +34,7 @@ environment:
   RTM_LISTEN_ADDR          address to listen on (default 127.0.0.1:8080)
   RTM_LOG                  log filter, e.g. info or rtm_api=debug (default info)
   RTM_FETCH_WORKERS        concurrent fetches (default 2)
+  RTM_EXTRACT_WORKERS      concurrent extractions (default 1)
   RTM_FETCH_IGNORE_ROBOTS  true to ignore robots.txt (\"disrespectful mode\");
                            same as --ignore-robots
   RTM_FETCH_DENY           extra address ranges never to fetch, comma-separated
@@ -58,6 +61,11 @@ fn main() -> ExitCode {
     {
         ["server"] => run_server(false),
         ["server", "--ignore-robots"] => run_server(true),
+        // Logs would corrupt the protocol on stdout, so this role logs nothing; errors
+        // go to stderr, which the server records.
+        ["extract-worker"] => ExitCode::from(rtm_extract::worker::run(
+            &rtm_extract::worker::WorkerLimits::default(),
+        )),
         ["--version" | "-V"] => {
             println!("rtm {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -92,6 +100,20 @@ fn static_token() -> Result<StaticToken, String> {
     let token = std::env::var("RTM_STATIC_TOKEN")
         .map_err(|_| "RTM_STATIC_TOKEN is not set; the API has no other authentication yet")?;
     StaticToken::new(&token, UserId(OWNER.into())).map_err(|e| format!("RTM_STATIC_TOKEN: {e}"))
+}
+
+/// RTM_EXTRACT_WORKERS: concurrent extract workers, each a sandboxed process using up
+/// to 512 MB.
+fn extract_worker_count() -> Result<usize, String> {
+    match std::env::var("RTM_EXTRACT_WORKERS") {
+        Err(_) => Ok(1),
+        Ok(n) => n
+            .trim()
+            .parse()
+            .ok()
+            .filter(|n| (1..=16).contains(n))
+            .ok_or_else(|| format!("RTM_EXTRACT_WORKERS={n:?}: expected 1 to 16")),
+    }
 }
 
 fn data_dir() -> PathBuf {
@@ -145,12 +167,41 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let stage: Arc<dyn StageRunner> =
-        Arc::new(FetchStage::new(fetcher, BlobStore::new(dir.join("blobs"))));
+    let blobs = BlobStore::new(dir.join("blobs"));
+    // The extract worker is this same binary in another role (ADR-0006).
+    let this_binary = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::error!(error = %e, "could not locate this binary to start extract workers");
+            return ExitCode::FAILURE;
+        }
+    };
+    let extract_workers = match extract_worker_count() {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(error = %e, "invalid configuration");
+            return ExitCode::FAILURE;
+        }
+    };
+    let fetch_stage: Arc<dyn StageRunner> = Arc::new(FetchStage::new(fetcher, blobs.clone()));
+    let extract_stage: Arc<dyn StageRunner> = Arc::new(ExtractStage::new(
+        this_binary,
+        vec!["extract-worker".into()],
+        blobs,
+        ExtractConfig::default(),
+    ));
     let (stop_workers, workers_stopped) = tokio::sync::watch::channel(false);
-    let workers: Vec<_> = (0..fetch.workers)
-        .map(|n| {
-            let worker = Worker::new(format!("fetch-{n}"), Arc::clone(&store), Arc::clone(&stage));
+    let pools = [
+        ("fetch", fetch.workers, &fetch_stage),
+        ("extract", extract_workers, &extract_stage),
+    ];
+    let workers: Vec<_> = pools
+        .iter()
+        .flat_map(|(name, count, stage)| {
+            (0..*count).map(move |n| (format!("{name}-{n}"), Arc::clone(stage)))
+        })
+        .map(|(name, stage)| {
+            let worker = Worker::new(name, Arc::clone(&store), stage);
             tokio::spawn(worker.run(workers_stopped.clone()))
         })
         .collect();
