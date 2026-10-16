@@ -15,8 +15,8 @@ use rtm_blobs::BlobStore;
 use rtm_domain::UserId;
 use rtm_fetch::SafeFetcher;
 use rtm_pipeline::{
-    DEFAULT_MAX_WORDS, ExtractConfig, ExtractStage, FetchStage, ScriptStage, StageRunner,
-    SynthesiseConfig, SynthesiseStage, Worker,
+    DEFAULT_MAX_WORDS, EncodeConfig, EncodeStage, ExtractConfig, ExtractStage, FetchStage,
+    PublishStage, ScriptStage, StageRunner, SynthesiseConfig, SynthesiseStage, Worker,
 };
 use rtm_store::{QueuePolicy, Store};
 use tokio::net::TcpListener;
@@ -43,6 +43,7 @@ environment:
   RTM_MAX_WORDS            longest article narrated, in words (default 30000)
   RTM_TTS_URL              the rtm tts process (default http://127.0.0.1:8090)
   RTM_TTS_VOICE            narration voice (default bf_emma)
+  RTM_FFMPEG               the ffmpeg binary (default: ffmpeg on PATH)
   RTM_FETCH_IGNORE_ROBOTS  true to ignore robots.txt (\"disrespectful mode\");
                            same as --ignore-robots
   RTM_FETCH_DENY           extra address ranges never to fetch, comma-separated
@@ -144,6 +145,26 @@ fn tts_client() -> Result<rtm_speech::client::TtsClient, String> {
         .map_err(|e| format!("RTM_TTS_URL: {e}"))
 }
 
+/// RTM_FFMPEG, or ffmpeg on PATH, as an absolute path: the encoder runs with a cleared
+/// environment, so it can't search PATH itself.
+fn ffmpeg() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("RTM_FFMPEG") {
+        let path = PathBuf::from(path);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!("RTM_FFMPEG={}: no such file", path.display()))
+        };
+    }
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("ffmpeg"))
+                .find(|p| p.is_file())
+        })
+        .ok_or_else(|| "ffmpeg isn't on PATH: install it or set RTM_FFMPEG".into())
+}
+
 /// RTM_MAX_WORDS: the longest article narrated (FR-TTS-06).
 fn max_words() -> Result<u64, String> {
     match std::env::var("RTM_MAX_WORDS") {
@@ -217,8 +238,9 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let config = extract_worker_count().and_then(|n| Ok((n, max_words()?, tts_client()?)));
-    let (extract_workers, max_words, tts) = match config {
+    let config =
+        extract_worker_count().and_then(|n| Ok((n, max_words()?, tts_client()?, ffmpeg()?)));
+    let (extract_workers, max_words, tts, ffmpeg) = match config {
         Ok(config) => config,
         Err(e) => {
             tracing::error!(error = %e, "invalid configuration");
@@ -240,6 +262,14 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             ..SynthesiseConfig::default()
         },
     ));
+    let encode_stage: Arc<dyn StageRunner> = Arc::new(EncodeStage::new(
+        blobs.clone(),
+        EncodeConfig {
+            ffmpeg,
+            timeout: Duration::from_secs(1_800),
+        },
+    ));
+    let publish_stage: Arc<dyn StageRunner> = Arc::new(PublishStage);
     let script_stage: Arc<dyn StageRunner> = Arc::new(ScriptStage::new(
         blobs,
         rtm_narrate::Options::default(),
@@ -252,6 +282,8 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
         ("script", 1, &script_stage),
         // One at a time: the TTS process synthesises one piece at a time anyway.
         ("synthesise", 1, &synthesise_stage),
+        ("encode", 1, &encode_stage),
+        ("publish", 1, &publish_stage),
     ];
     let workers: Vec<_> = pools
         .iter()
