@@ -2290,6 +2290,7 @@ dependencies = [
 name = "rtm-bin"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "ipnet",
  "rtm-api",
  "rtm-article",
@@ -2300,7 +2301,9 @@ dependencies = [
  "rtm-narrate",
  "rtm-pipeline",
  "rtm-ports",
+ "rtm-speech",
  "rtm-store",
+ "rtm-tts",
  "serde_json",
  "tempfile",
  "tokio",
