@@ -10,7 +10,8 @@ use rtm_domain::Stage;
 use rtm_ports::JobQueue;
 
 /// A plausible output for completing `job`: fetch records a source, extract an
-/// article, script a script; later stages record nothing yet.
+/// article, script a script,
+/// synthesise a speech plan; later stages record nothing yet.
 fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
     match job.stage {
         rtm_domain::Stage::Fetch => rtm_ports::StageOutput::Source(rtm_domain::Source {
@@ -30,6 +31,11 @@ fn output_for(job: &rtm_ports::Job) -> rtm_ports::StageOutput {
         rtm_domain::Stage::Script => rtm_ports::StageOutput::Script(rtm_domain::ScriptRecord {
             key: rtm_domain::BlobKey::from_hash([9; 32]),
             words: 1240,
+        }),
+        rtm_domain::Stage::Synthesise => rtm_ports::StageOutput::Speech(rtm_domain::SpeechRecord {
+            plan_key: rtm_domain::BlobKey::from_hash([10; 32]),
+            duration_ms: 480_000,
+            segments: 12,
         }),
         _ => rtm_ports::StageOutput::Nothing,
     }
