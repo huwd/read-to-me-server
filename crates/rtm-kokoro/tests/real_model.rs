@@ -43,3 +43,24 @@ fn kokoro_speaks() {
     assert_eq!(engine.synthesize(text, "bf_emma").unwrap(), pcm);
     assert!(engine.synthesize("Hello.", "nobody").is_err());
 }
+
+/// A "word" too long for the model is spoken in full, not cut off: its audio grows
+/// with its length. A long hyphenated run has no spaces, so it's one chunk, but its
+/// parts are dictionary words, so its phonemes go far past the 510-token limit.
+#[test]
+#[ignore = "needs the Kokoro model files"]
+fn an_overlong_word_is_not_truncated() {
+    let engine = KokoroEngine::load(&model_dir(), 4).unwrap();
+    let word = |n: usize| vec!["the-cat-sat-on-the-mat"; n].join("-");
+    let short = engine
+        .synthesize(&word(10), "bf_emma")
+        .unwrap()
+        .duration_ms();
+    let long = engine
+        .synthesize(&word(40), "bf_emma")
+        .unwrap()
+        .duration_ms();
+    // Four times the tokens gives about 3.4 times the audio (fixed overhead at the
+    // edges); truncated at 510 tokens it gives about 1.7 times.
+    assert!(long * 10 > short * 25, "short {short} ms, long {long} ms");
+}
