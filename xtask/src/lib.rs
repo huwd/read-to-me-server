@@ -3,3 +3,4 @@
 
 pub mod commits;
 pub mod docs_links;
+pub mod kokoro_models;
