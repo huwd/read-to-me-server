@@ -4,6 +4,7 @@
 //! Stages are idempotent: their outputs are content-addressed blobs written before the
 //! job is completed, so a stage re-run after a crash writes the same keys again.
 
+mod encode;
 mod extract;
 mod fetch;
 mod script;
@@ -18,6 +19,7 @@ use rtm_domain::{FailureCode, Item, Millis, Stage};
 use rtm_ports::{FailOutcome, ItemRepository, Job, JobQueue, StageOutput, StoreError};
 use tokio::sync::watch;
 
+pub use encode::{ENCODER_VERSION, EncodeConfig, EncodeStage, PublishStage};
 pub use extract::{ExtractConfig, ExtractStage};
 pub use fetch::FetchStage;
 pub use script::{DEFAULT_MAX_WORDS, ScriptStage};
