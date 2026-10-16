@@ -57,6 +57,58 @@ jobs:
         # The real-model test is ignored here: it needs the model files.
         run: cargo test -p rtm-kokoro -p rtm-bin --features rtm-bin/kokoro --locked
 
+  image:
+    name: Server image and end-to-end test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          config: .hadolint.yaml
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: rtm
+          tags: rtm:e2e
+          load: true
+          cache-from: type=gha,scope=rtm
+          cache-to: type=gha,scope=rtm,mode=max
+      - name: Size budget
+        # docs/05 §2.1: at most 50 MB, measured compressed, as pulled (ADR-0015).
+        run: |
+          bytes=$(docker save rtm:e2e | gzip -c | wc -c)
+          echo "rtm image: $((bytes / 1000000)) MB compressed"
+          [ "$bytes" -le 50000000 ]
+      # The test checks the episode with ffprobe and ffmpeg's loudness meter.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - name: End-to-end test
+        run: e2e/run.sh
+
+  tts-image:
+    name: TTS image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Builds Kokoro and fetches the pinned model files; the e2e test uses the fake
+      # engine, so this only checks the image builds.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: tts
+          cache-from: type=gha,scope=tts
+          cache-to: type=gha,scope=tts,mode=max
+
   deny:
     name: Licences and advisories (cargo-deny)
     runs-on: ubuntu-latest
