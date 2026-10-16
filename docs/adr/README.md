@@ -17,3 +17,4 @@ Format: [MADR](https://adr.github.io/madr/). One decision per file, numbered, ne
 | [0011](0011-observability-stack.md) | Observability: OpenTelemetry, optional bundled LGTM, local-only analytics | **Accepted** |
 | 0012 | Client strategy (web UI / native wrappers / native apps) | Deferred |
 | [0013](0013-secret-scanner.md) | Secret scanner: Gitleaks vs Betterleaks | Proposed |
+| [0014](0014-kokoro-dependencies-and-build.md) | Kokoro's pronunciation fork and native build | Accepted |
