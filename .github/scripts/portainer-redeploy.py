@@ -49,7 +49,8 @@ def request(method, url, key, body=None, headers=None, timeout=300):
 
 
 def pull(base, key, endpoint, image, tag):
-    auth = base64.b64encode(
+    # Docker decodes X-Registry-Auth as base64url, not standard base64.
+    auth = base64.urlsafe_b64encode(
         json.dumps(
             {
                 "username": env("REGISTRY_USERNAME"),
