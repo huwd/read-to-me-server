@@ -17,12 +17,14 @@ use rtm_domain::BlobKey;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlobKind {
     Source,
+    Article,
 }
 
 impl BlobKind {
     fn as_str(self) -> &'static str {
         match self {
             BlobKind::Source => "source",
+            BlobKind::Article => "article",
         }
     }
 }
@@ -44,6 +46,20 @@ fn derive(kind: BlobKind, fields: &[&[u8]]) -> BlobKey {
 /// for public URL-fetched content so household members share downstream work.
 pub fn source_key(bytes: &[u8], owner_salt: &[u8]) -> BlobKey {
     derive(BlobKind::Source, &[bytes, owner_salt])
+}
+
+/// The key for an extracted article (ADR-0008): the source it came from, the extractor
+/// that made it (`id@version`) and the `Article` schema version. Bumping either version
+/// gives new keys, so stale results are never reused.
+pub fn article_key(source: &BlobKey, extractor: &str, schema_version: u32) -> BlobKey {
+    derive(
+        BlobKind::Article,
+        &[
+            source.as_str().as_bytes(),
+            extractor.as_bytes(),
+            &schema_version.to_le_bytes(),
+        ],
+    )
 }
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -232,6 +248,22 @@ mod tests {
             h.join().unwrap().unwrap();
         }
         assert!(deep.is_dir());
+    }
+
+    #[test]
+    fn article_keys_change_with_every_version() {
+        let source = source_key(b"page", b"");
+        let k = |e: &str, v: u32| article_key(&source, e, v);
+        assert_eq!(k("generic-html@1", 1), k("generic-html@1", 1));
+        assert_ne!(k("generic-html@1", 1), k("generic-html@2", 1));
+        assert_ne!(k("generic-html@1", 1), k("readability@1", 1));
+        assert_ne!(k("generic-html@1", 1), k("generic-html@1", 2));
+        assert_ne!(
+            k("generic-html@1", 1),
+            article_key(&source_key(b"other", b""), "generic-html@1", 1)
+        );
+        // Different kinds never share keys, even over the same bytes.
+        assert_ne!(source.as_str(), k("", 0).as_str());
     }
 
     #[test]
