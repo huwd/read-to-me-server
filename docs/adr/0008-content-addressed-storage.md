@@ -27,7 +27,7 @@ All keys are **BLAKE3** hashes, rendered as hex, over a canonical, length-prefix
 | Kind | Key inputs |
 |------|-----------|
 | `source` | raw source bytes ‖ *owner salt* |
-| `article` | source key ‖ `extractor_id@version` ‖ `article_schema_version` |
+| `article` | source key ‖ final URL ‖ source kind ‖ declared charset ‖ `extractor_id@version` ‖ `article_schema_version` ([Amendment 1](#amendment-1-2026-10-16-article-keys-cover-every-extraction-input)) |
 | `segment` (TTS piece) | normalised segment text ‖ language ‖ `engine_id@version` ‖ model hash ‖ voice id + voice-file hash ‖ synthesis params |
 | `episode` (MP3) | ordered segment keys ‖ pause plan ‖ `encoder@version` ‖ encoder params ‖ chapter plan |
 | `transcript`, `chapters` | episode key ‖ format version |
@@ -62,3 +62,18 @@ All keys are **BLAKE3** hashes, rendered as hex, over a canonical, length-prefix
 - Storage is reclaimed by GC rather than immediately on delete. The item disappears from the feed at once ([FR-MGMT-01](../01-product-spec.md#fr-mgmt-01)), and the audio goes within the grace period ([NFR-SEC6](../03-architecture-and-nfrs.md#nfr-sec6)'s 24 h).
 - Backups: the database is small and backed up by [ADR-0003](0003-sqlite-datastore-and-queue.md); blobs are regenerable, so backing them up is optional.
 - ⚑ Hosting impact: the same keys would allow a cross-tenant cache, with the copyright and privacy issues in [doc 02 §3](../02-product-viability.md#3-critique-of-the-proposition-the-uncomfortable-bits). Not built.
+
+## Amendment 1 (2026-10-16): article keys cover every extraction input
+
+The original `article` key, source key ‖ extractor ‖ schema version, assumed extraction reads only the source bytes. It doesn't. It also reads:
+- **the final URL**, from which a missing title is derived and the canonical URL taken;
+- **the source kind**, which chooses the extractor family;
+- **the declared charset**, which changes how the bytes decode.
+
+So identical bytes fetched from different URLs, or served with different charsets, produced different articles under one key. The blob store never rewrites, so the second item recorded its own extraction while pointing at the first item's article ([PR #36](https://github.com/huwd/read-to-me-server/pull/36), found in review).
+
+**Decision:** the `article` key covers everything extraction reads: source key ‖ final URL ‖ source kind ‖ declared charset (with a presence tag, so absent and empty differ) ‖ `extractor_id@version` ‖ `article_schema_version`. The table above is updated.
+
+**Rule for every key in this ADR:** a key must cover every input the producing stage reads, not just the obvious one. Later stages (segments, episodes) should be checked against this rule when they're built.
+
+**Consequences:** sharing between household members still works for the common case, the same URL. Identical bytes reached through different URLs no longer share an article. That's the correct trade, because the articles can genuinely differ.
