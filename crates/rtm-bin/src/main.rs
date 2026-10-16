@@ -67,6 +67,13 @@ tts environment:
 /// How long shutdown waits for in-flight fetches (each is capped at 30 s).
 const WORKER_DRAIN: Duration = Duration::from_secs(35);
 
+/// The longest each ffmpeg run in the encode stage may take.
+const ENCODE_TIMEOUT: Duration = Duration::from_secs(1_800);
+
+/// Scratch files older than this are leftovers from a crash and removed at startup:
+/// comfortably longer than any write still in progress (an encode runs ffmpeg twice).
+const SCRATCH_SWEEP_AGE: Duration = Duration::from_secs(6 * 3_600);
+
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:8080";
 const DEFAULT_DATA_DIR: &str = "data";
 
@@ -249,6 +256,11 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
         }
     };
     let blobs = BlobStore::new(dir.join("blobs"));
+    match blobs.sweep_scratch(SCRATCH_SWEEP_AGE) {
+        Ok(0) => {}
+        Ok(removed) => tracing::info!(removed, "removed scratch files left by a crash"),
+        Err(e) => tracing::warn!(error = %e, "could not sweep old scratch files"),
+    }
     // The extract worker is this same binary in another role (ADR-0006).
     let this_binary = match std::env::current_exe() {
         Ok(path) => path,
@@ -285,7 +297,7 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
         blobs.clone(),
         EncodeConfig {
             ffmpeg,
-            timeout: Duration::from_secs(1_800),
+            timeout: ENCODE_TIMEOUT,
         },
     ));
     let publish_stage: Arc<dyn StageRunner> = Arc::new(PublishStage);

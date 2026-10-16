@@ -228,21 +228,22 @@ impl EncodeStage {
         let key = episode_key(&speech.plan_key, &fingerprint, &tags_json);
         let path = self.blobs.local_path(BlobKind::Episode, &key);
 
-        if !path.is_file() {
-            let wav = self
-                .blobs
-                .scratch_path("wav")
-                .map_err(|_| internal("No scratch space for encoding; it will be retried."))?;
-            let mp3 = self
-                .blobs
-                .scratch_path("mp3")
-                .map_err(|_| internal("No scratch space for encoding; it will be retried."))?;
-            let result = self.encode_to(&plan, &tags, &wav, &mp3).await;
-            let _ = tokio::fs::remove_file(&wav).await;
-            if let Err(e) = result {
-                let _ = tokio::fs::remove_file(&mp3).await;
-                return Err(e);
-            }
+        if path.is_file() {
+            // Reused from an earlier attempt, which may have stopped before making it
+            // durable.
+            self.blobs
+                .sync(BlobKind::Episode, &key)
+                .await
+                .map_err(|_| internal("The episode couldn't be stored; it will be retried."))?;
+        } else {
+            // Scratch files are removed when dropped: on failure, and also if this
+            // future is dropped because the lease was lost or the server is stopping.
+            let no_space =
+                |_: std::io::Error| internal("No scratch space for encoding; it will be retried.");
+            let wav = self.blobs.scratch("wav").map_err(no_space)?;
+            let mp3 = self.blobs.scratch("mp3").map_err(no_space)?;
+            self.encode_to(&plan, &tags, wav.path(), mp3.path()).await?;
+            drop(wav);
             self.blobs
                 .put_file(BlobKind::Episode, &key, mp3)
                 .await
