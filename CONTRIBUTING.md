@@ -38,6 +38,11 @@ Signed-off-by: Your Name <you@example.com>
   cargo xtask docs-links check
   cargo xtask commits
   ```
+- If you've touched the images, the compose files or anything on the request path, run the end-to-end test. It needs Docker, ffmpeg and python3, and it uses the fake speech engine:
+  ```sh
+  docker build --target rtm -t rtm:e2e .
+  e2e/run.sh
+  ```
 - Reference requirement IDs (`FR-*`, `NFR-*`) in tests and in the PR description.
 - New third-party dependencies must pass the licence allow-list in [`deny.toml`](deny.toml).
 
