@@ -121,6 +121,27 @@ impl Inference {
             .collect()
     }
 
+    /// Run the model over one window of at most [`MAX_TOKENS`] tokens.
+    fn infer(&mut self, ids: &[i64], styles: &[Vec<f32>]) -> Result<Vec<f32>, SpeechError> {
+        let failed = |e: ort::Error| SpeechError::Failed(e.to_string());
+        let count = ids.len();
+        let style = &styles[count.min(styles.len() - 1)];
+        let mut padded = Vec::with_capacity(count + 2);
+        padded.push(0);
+        padded.extend_from_slice(ids);
+        padded.push(0);
+        let inputs = ort::inputs![
+            self.inputs[0].as_str() => Tensor::from_array(([1usize, count + 2], padded)).map_err(failed)?,
+            self.inputs[1].as_str() => Tensor::from_array(([1usize, STYLE_WIDTH], style.clone())).map_err(failed)?,
+            self.inputs[2].as_str() => Tensor::from_array(([1usize], vec![1.0f32])).map_err(failed)?,
+        ];
+        let outputs = self.session.run(inputs).map_err(failed)?;
+        let (_, wave) = outputs[self.output.as_str()]
+            .try_extract_tensor::<f32>()
+            .map_err(failed)?;
+        Ok(wave.to_vec())
+    }
+
     fn synthesize(&mut self, text: &str, voice: &str) -> Result<Pcm, SpeechError> {
         let (_, lang) =
             voice_language(voice).ok_or_else(|| SpeechError::UnknownVoice(voice.into()))?;
@@ -135,9 +156,11 @@ impl Inference {
             .get(voice)
             .ok_or_else(|| SpeechError::UnknownVoice(voice.into()))?
             .clone();
-        let mut samples: Vec<i16> = Vec::new();
-        for chunk in chunks {
-            let Some(phonemes) = self.phonemes(g2p, &chunk) else {
+        // First every chunk's tokens (reads the G2P), then inference (needs the session
+        // exclusively).
+        let mut token_chunks: Vec<Vec<i64>> = Vec::new();
+        for chunk in &chunks {
+            let Some(phonemes) = self.phonemes(g2p, chunk) else {
                 tracing::warn!(chunk = %chunk, "no phonemes; skipped");
                 continue;
             };
@@ -145,34 +168,29 @@ impl Inference {
             if unknown > 0 {
                 tracing::debug!(unknown, chunk = %chunk, "unknown phonemes");
             }
-            let mut ids = self.tokens(&phonemes);
-            ids.truncate(MAX_TOKENS);
-            if ids.is_empty() {
-                continue;
+            let ids = self.tokens(&phonemes);
+            if ids.len() > MAX_TOKENS {
+                // Only a single "word" too long for the model gets here (chunks packs
+                // whole words): say all of it, in model-sized windows, rather than
+                // dropping the rest and caching the shortened audio.
+                tracing::warn!(tokens = ids.len(), "overlong word spoken in pieces");
             }
-            let style = &styles[ids.len().min(styles.len() - 1)];
-            let count = ids.len();
-            let mut padded = Vec::with_capacity(count + 2);
-            padded.push(0);
-            padded.extend(ids);
-            padded.push(0);
-            let failed = |e: ort::Error| SpeechError::Failed(e.to_string());
-            let inputs = ort::inputs![
-                self.inputs[0].as_str() => Tensor::from_array(([1usize, count + 2], padded)).map_err(failed)?,
-                self.inputs[1].as_str() => Tensor::from_array(([1usize, STYLE_WIDTH], style.clone())).map_err(failed)?,
-                self.inputs[2].as_str() => Tensor::from_array(([1usize], vec![1.0f32])).map_err(failed)?,
-            ];
-            let outputs = self.session.run(inputs).map_err(failed)?;
-            let (_, wave) = outputs[self.output.as_str()]
-                .try_extract_tensor::<f32>()
-                .map_err(failed)?;
+            if !ids.is_empty() {
+                token_chunks.push(ids);
+            }
+        }
+        let mut samples: Vec<i16> = Vec::new();
+        for ids in &token_chunks {
             if !samples.is_empty() {
                 samples.extend(Pcm::silence(SAMPLE_RATE, CHUNK_PAUSE_MS));
             }
-            samples.extend(
-                wave.iter()
-                    .map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16),
-            );
+            for window in token_windows(ids) {
+                let wave = self.infer(window, &styles)?;
+                samples.extend(
+                    wave.iter()
+                        .map(|s| (s.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16),
+                );
+            }
         }
         if samples.is_empty() {
             return Err(SpeechError::BadText(
@@ -184,6 +202,12 @@ impl Inference {
             samples,
         })
     }
+}
+
+/// A chunk's tokens in windows the model can take. Every token is in exactly one
+/// window, in order: nothing is dropped.
+fn token_windows(ids: &[i64]) -> impl Iterator<Item = &[i64]> {
+    ids.chunks(MAX_TOKENS)
 }
 
 fn short(hash: &str) -> &str {
@@ -371,6 +395,20 @@ mod tests {
         let vocab = vocabulary(r#"{"model":{"vocab":{"a":43,"ʤ":82}}}"#).unwrap();
         assert_eq!((vocab[&'a'], vocab[&'ʤ']), (43, 82));
         assert!(vocabulary("{}").is_err());
+    }
+
+    #[test]
+    fn overlong_token_runs_are_windowed_not_truncated() {
+        let ids: Vec<i64> = (0..1_234).collect();
+        let windows: Vec<&[i64]> = token_windows(&ids).collect();
+        assert_eq!(windows.len(), 3);
+        assert!(
+            windows
+                .iter()
+                .all(|w| !w.is_empty() && w.len() <= MAX_TOKENS)
+        );
+        assert_eq!(windows.concat(), ids, "a token was lost or reordered");
+        assert_eq!(token_windows(&ids[..MAX_TOKENS]).count(), 1);
     }
 
     #[test]
