@@ -42,7 +42,13 @@ confidence-threshold = 0.93
 # The allow-list is policy, not an inventory: unused entries are expected.
 unused-allowed-license = "allow"
 # Per-crate exceptions require a justification comment and an ADR-0010 reference.
-exceptions = []
+exceptions = [
+    # WTFPL-2.0: a permissive grant with no conditions, FSF-listed as GPL-compatible but
+    # not OSI-approved. Allowed for this crate only, a small tokenizer used by our
+    # misaki-rs fork in Kokoro builds; any other WTFPL crate is still rejected.
+    # ADR-0010 Amendment 3.
+    { crate = "language-tokenizer", allow = ["WTFPL"] },
+]
 
 [licenses.private]
 ignore = true
@@ -55,3 +61,5 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Our misaki-rs fork with the upstream Misaki lexicons (ADR-0014). The only git source.
+allow-git = ["https://github.com/huwd/misaki-rs"]
