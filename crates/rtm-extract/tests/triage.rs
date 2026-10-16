@@ -273,3 +273,36 @@ fn derived_titles() {
         "Untitled article"
     );
 }
+
+/// Codex's reproduction: a derived title from a huge opening "word" must be bounded,
+/// and the result must pass validation with an accurate word count.
+#[test]
+fn derived_titles_are_bounded_validated_and_counted() {
+    let registry = Registry::builtin(TriageConfig::default());
+    let text = SourceDocument {
+        bytes: format!("{} {}", "x".repeat(3000), "word ".repeat(250)).into_bytes(),
+        kind: SourceKind::PlainText,
+        charset: None,
+        final_url: None,
+    };
+    let e = registry.extract(&text).unwrap();
+    assert!(e.derived_title);
+    assert_eq!(e.article.title.chars().count(), 120);
+    assert!(e.article.title.ends_with('…'));
+    assert_eq!(e.words, e.article.word_count());
+    let revalidated = e
+        .article
+        .clone()
+        .validate(&rtm_article::Limits::default())
+        .unwrap();
+    assert_eq!(revalidated, e.article);
+
+    // Ordinary derived titles are counted too.
+    let plain = SourceDocument {
+        bytes: "word ".repeat(250).into_bytes(),
+        ..text
+    };
+    let e = registry.extract(&plain).unwrap();
+    assert_eq!(e.words, e.article.word_count());
+    assert_eq!(e.words, 250 + 10);
+}

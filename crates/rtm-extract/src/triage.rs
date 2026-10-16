@@ -148,8 +148,18 @@ impl Registry {
         }
         if let Some(mut attempt) = untitled {
             attempt.article.title = fallback_title(doc, &attempt.article);
-            attempt.derived_title = true;
-            return Ok(attempt);
+            // Revalidate and recount: the result must meet the same checks as any other.
+            match attempt.article.validate(&self.config.limits) {
+                Ok(article) => {
+                    return Ok(Extraction {
+                        words: article.word_count(),
+                        article,
+                        derived_title: true,
+                        ..attempt
+                    });
+                }
+                Err(e) => reasons.push(format!("{}: derived title: {e}", attempt.extractor)),
+            }
         }
         Err(Failure::LowConfidence {
             best: best.map(Box::new),
@@ -181,11 +191,29 @@ enum Quality {
 /// Words taken from the start of the text for a derived title.
 const TITLE_WORDS: usize = 10;
 
+/// Longest derived title, in characters, well inside the metadata field limit.
+const MAX_DERIVED_TITLE_CHARS: usize = 120;
+
+/// `title` cut to [`MAX_DERIVED_TITLE_CHARS`], marking any cut with an ellipsis.
+fn bounded(title: String) -> String {
+    if title.chars().count() <= MAX_DERIVED_TITLE_CHARS {
+        return title;
+    }
+    let mut cut: String = title.chars().take(MAX_DERIVED_TITLE_CHARS - 1).collect();
+    cut.truncate(cut.trim_end_matches('…').trim_end().len());
+    cut.push('…');
+    cut
+}
+
 /// A title for an article that has none (ADR-0006's quality check needs one, and the
 /// narrator reads it first): the last segment of the URL's path when it reads like
 /// words (`/2026/10/still-water-history.html` → "Still water history"), otherwise the
 /// opening words of the text.
 pub fn fallback_title(doc: &SourceDocument, article: &Article) -> String {
+    bounded(unbounded_title(doc, article))
+}
+
+fn unbounded_title(doc: &SourceDocument, article: &Article) -> String {
     let from_url = doc
         .final_url
         .as_ref()
