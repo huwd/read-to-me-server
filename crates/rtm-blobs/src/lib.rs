@@ -21,6 +21,7 @@ pub enum BlobKind {
     Script,
     Segment,
     Plan,
+    Episode,
 }
 
 impl BlobKind {
@@ -31,6 +32,7 @@ impl BlobKind {
             BlobKind::Script => "script",
             BlobKind::Segment => "segment",
             BlobKind::Plan => "plan",
+            BlobKind::Episode => "episode",
         }
     }
 }
@@ -120,6 +122,20 @@ pub fn plan_key(script: &BlobKey, engine_fingerprint: &str, params: &[u8]) -> Bl
     )
 }
 
+/// The key for an encoded episode (ADR-0008): the speech plan (which covers the
+/// segments and pauses), the encoder's fingerprint (ffmpeg version and our encoding
+/// parameters) and the tags written into the file.
+pub fn episode_key(plan: &BlobKey, encoder_fingerprint: &str, tags: &[u8]) -> BlobKey {
+    derive(
+        BlobKind::Episode,
+        &[
+            plan.as_str().as_bytes(),
+            encoder_fingerprint.as_bytes(),
+            tags,
+        ],
+    )
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Blobs on the local filesystem under one root directory.
@@ -163,6 +179,42 @@ impl BlobStore {
 
     pub async fn exists(&self, kind: BlobKind, key: &BlobKey) -> io::Result<bool> {
         tokio::fs::try_exists(self.path(kind, key)).await
+    }
+
+    /// Where a blob lives on disk, for streaming it (Range requests) without loading it.
+    pub fn local_path(&self, kind: BlobKind, key: &BlobKey) -> PathBuf {
+        self.path(kind, key)
+    }
+
+    /// A fresh scratch file path on the blob store's filesystem, for building a large
+    /// blob that [`BlobStore::put_file`] can then move into place without copying.
+    pub fn scratch_path(&self, suffix: &str) -> io::Result<PathBuf> {
+        let tmp = self.root.join("tmp");
+        create_dir_durable(&tmp)?;
+        Ok(tmp.join(format!(
+            "scratch.{}.{}.{suffix}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        )))
+    }
+
+    /// Move the finished file at `from` (made with [`BlobStore::scratch_path`]) into the
+    /// store under `key`, durably. If the blob already exists, `from` is removed instead.
+    pub async fn put_file(&self, kind: BlobKind, key: &BlobKey, from: PathBuf) -> io::Result<()> {
+        let path = self.path(kind, key);
+        tokio::task::spawn_blocking(move || {
+            let dir = path.parent().expect("blob paths have a parent");
+            create_dir_durable(dir)?;
+            if path.exists() {
+                fs::remove_file(&from)?;
+                return Ok(());
+            }
+            File::open(&from)?.sync_all()?;
+            fs::rename(&from, &path)?;
+            sync_dir(dir)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 }
 
@@ -387,6 +439,36 @@ mod tests {
         );
         // Different kinds never share keys.
         assert_ne!(base.key.as_str(), key.as_str());
+    }
+
+    #[tokio::test]
+    async fn large_files_move_into_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BlobStore::new(dir.path());
+        let key = source_key(b"episode", b"");
+        let scratch = store.scratch_path("mp3").unwrap();
+        fs::write(&scratch, b"mp3 bytes").unwrap();
+        store
+            .put_file(BlobKind::Episode, &key, scratch.clone())
+            .await
+            .unwrap();
+        assert!(!scratch.exists());
+        assert_eq!(
+            fs::read(store.local_path(BlobKind::Episode, &key)).unwrap(),
+            b"mp3 bytes"
+        );
+        // A second copy of an existing blob is discarded, not swapped in.
+        let again = store.scratch_path("mp3").unwrap();
+        fs::write(&again, b"different").unwrap();
+        store
+            .put_file(BlobKind::Episode, &key, again.clone())
+            .await
+            .unwrap();
+        assert!(!again.exists());
+        assert_eq!(
+            store.get(BlobKind::Episode, &key).await.unwrap(),
+            b"mp3 bytes"
+        );
     }
 
     #[test]
