@@ -31,9 +31,18 @@ struct ItemView {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure: Option<FailureView>,
+    /// Once extracted: what will be narrated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    article: Option<ArticleView>,
     status_url: String,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ArticleView {
+    title: String,
+    words: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,6 +97,10 @@ impl From<Item> for ItemView {
             url: item.source_url,
             status: status(item.state),
             failure,
+            article: item.article.map(|a| ArticleView {
+                title: a.title,
+                words: a.words,
+            }),
             status_url: status_url(item.id),
             created_at: rfc3339(item.created_at),
             updated_at: rfc3339(item.updated_at),
