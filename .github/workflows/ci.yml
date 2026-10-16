@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # A newer push supersedes a PR's run, but never interrupts a deploy from main.
+  # A newer push supersedes a PR's run, but never interrupts a publish from main.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -168,10 +168,11 @@ jobs:
           advanced-security: false
 
   # On merge to main: push both images to the owner's private registry over
-  # Tailscale and redeploy their instance (ADR-0015 Amendment 1). Signed,
-  # multi-arch images on GHCR for other self-hosters come later (issue #25).
+  # Tailscale (ADR-0015 Amendment 1). The owner's instance picks them up through
+  # its own infrastructure. Signed, multi-arch images on GHCR for other
+  # self-hosters come later (issue #25).
   publish:
-    name: Publish and deploy
+    name: Publish images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [rust, kokoro, image, tts-image, deny, docs, workflows]
     runs-on: ubuntu-latest
@@ -240,17 +241,3 @@ jobs:
             ${{ env.REGISTRY }}/read-to-me-tts:${{ steps.tag.outputs.calver }}
           cache-from: type=gha,scope=tts
           cache-to: type=gha,scope=tts,mode=max
-      - name: Redeploy on Portainer
-        # Skipped until the stack exists and its ID is set as a repository variable.
-        if: vars.PORTAINER_STACK_ID != ''
-        env:
-          PORTAINER_URL: http://gismo:9000
-          PORTAINER_ACCESS_KEY: ${{ secrets.PORTAINER_ACCESS_KEY }}
-          PORTAINER_STACK_ID: ${{ vars.PORTAINER_STACK_ID }}
-          PORTAINER_ENDPOINT_ID: "2"
-          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-          IMAGES: read-to-me-rtm read-to-me-tts
-          # What the stack runs; the CalVer tags stay in the registry as the record.
-          TAG: latest
-        run: python3 .github/scripts/portainer-redeploy.py

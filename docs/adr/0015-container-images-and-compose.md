@@ -87,16 +87,22 @@ Two parts of the system don't fit a minimal image without a decision.
 
 ## Amendment 1 (2026-10-16): publishing to the owner's registry first
 
-**Decision.** For now, images are published only to the owner's private registry, and the owner's instance redeploys from them. Signed, multi-arch images on GHCR, with SBOMs and provenance ([doc 05](../05-quality-cicd-observability.md) §2.2), wait until other people run read-to-me. [Issue #25](https://github.com/huwd/read-to-me-server/issues/25) stays open for them.
+**Decision.** For now, images are published only to the owner's private registry. Signed, multi-arch images on GHCR, with SBOMs and provenance ([doc 05](../05-quality-cicd-observability.md) §2.2), wait until other people run read-to-me. [Issue #25](https://github.com/huwd/read-to-me-server/issues/25) stays open for them.
 
-**How it works.** The owner's existing pattern (`huwd/standards`, "Push container images to a private registry over Tailscale"), as a `publish` job in CI that runs after every other job passes on a push to `main`:
+**This repository publishes; the owner's infrastructure deploys.**
+- **Here:** CI builds and pushes the images. Nothing else.
+- **In the owner's infrastructure repository:**
+  - the stack's definition: its network, firewall rules, environment and secrets;
+  - how and when it updates. That's Watchtower, which picks up new `latest` images for containers labelled to opt in.
+- **Why the split:**
+  - **This repository is public.** A credential that can redeploy containers is effectively root on the host. It doesn't belong in a public repository's Actions secrets, where a compromised action or a bad merge could use it.
+  - **It's homelab knowledge.** Stack IDs, endpoints and host addresses describe one person's homelab, not the product.
+
+**How publishing works.** The owner's existing pattern (`huwd/standards`, "Push container images to a private registry over Tailscale"), as a `publish` job in CI that runs after every other job passes on a push to `main`:
 1. **Join the tailnet.** The runner joins as an ephemeral node tagged `tag:ci`, through a Tailscale OAuth client.
 2. **Push.** It builds `read-to-me-rtm` and `read-to-me-tts` for `linux/amd64` (the owner's NAS is x86-64) and pushes them to the registry by its tailnet name.
    - **Tags:** `latest`, plus an immutable CalVer tag (`YYYY.MM.DD-<sha7>`) taken from the commit date.
    - **Plain HTTP:** the registry speaks it, which is safe here. The traffic stays inside WireGuard, and the registry has no public address.
-3. **Redeploy.** Through Portainer's API, `.github/scripts/portainer-redeploy.py` pulls both images on the host from `127.0.0.1:5000`, then re-applies the stack's own stored compose file and environment. Containers whose image changed are recreated.
-   - **The stack definition isn't in this repo.** Its network, firewall rules, environment and secrets belong to the owner's infrastructure repository and to Portainer.
-   - **The redeploy is skipped until the repository variable `PORTAINER_STACK_ID` is set.**
 
 **Secrets:**
 
@@ -104,11 +110,8 @@ Two parts of the system don't fit a minimal image without a decision.
 |--------|-------|
 | `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_CLIENT_SECRET` | The OAuth client with `auth_keys` write and `tag:ci` |
 | `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | The registry login |
-| `PORTAINER_ACCESS_KEY` | A Portainer API key |
-
-**Variable:** `PORTAINER_STACK_ID`.
 
 **Consequences:**
-- **Every merge to `main` runs on the owner's instance within minutes.** That's the dogfooding loop the walking skeleton is for.
+- **A merge to `main` reaches the owner's instance at Watchtower's next run,** daily rather than within minutes. A faster loop, if it's wanted, is the infrastructure repository's to add.
 - **Nothing is published for other self-hosters yet.** `compose.yaml` builds both images from a checkout until it can name published ones.
-- **The images aren't signed.** [Doc 06](../06-security-and-pentest.md)'s "verify the signature before deploying" doesn't hold yet. That's acceptable while the only registry is private, the only path to it is the tailnet, and the only deployer is CI.
+- **The images aren't signed.** [Doc 06](../06-security-and-pentest.md)'s "verify the signature before deploying" doesn't hold yet. That's acceptable while the only registry is private and the only path to it is the tailnet.
