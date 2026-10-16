@@ -14,7 +14,7 @@ use rtm_api::StaticToken;
 use rtm_blobs::BlobStore;
 use rtm_domain::UserId;
 use rtm_fetch::SafeFetcher;
-use rtm_pipeline::{FetchStage, Worker};
+use rtm_pipeline::{FetchStage, StageRunner, Worker};
 use rtm_store::{QueuePolicy, Store};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
@@ -145,7 +145,8 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let stage = Arc::new(FetchStage::new(fetcher, BlobStore::new(dir.join("blobs"))));
+    let stage: Arc<dyn StageRunner> =
+        Arc::new(FetchStage::new(fetcher, BlobStore::new(dir.join("blobs"))));
     let (stop_workers, workers_stopped) = tokio::sync::watch::channel(false);
     let workers: Vec<_> = (0..fetch.workers)
         .map(|n| {
