@@ -28,6 +28,8 @@ roles:
   server [--ignore-robots]   HTTP API, workers and feed serving
   extract-worker             sandboxed article extraction; started by the server,
                              one document per run over stdin and stdout
+  tts                        speech synthesis over HTTP, for the server's
+                             synthesise stage
 
 environment:
   RTM_STATIC_TOKEN         API bearer token, at least 32 characters (required;
@@ -43,7 +45,13 @@ environment:
   RTM_FETCH_DENY           extra address ranges never to fetch, comma-separated
   RTM_FETCH_UNSAFE_ALLOW   private ranges to allow anyway, e.g. an intranet; this
                            re-opens them to server-side request forgery
-  RTM_FETCH_ALLOW_PORTS    ports to allow besides 80 and 443, comma-separated";
+  RTM_FETCH_ALLOW_PORTS    ports to allow besides 80 and 443, comma-separated
+
+tts environment:
+  RTM_TTS_LISTEN_ADDR      address to listen on (default 127.0.0.1:8090); keep it
+                           on an internal network: it has no authentication
+  RTM_TTS_ENGINE           the speech engine (required): fake, a test engine that
+                           makes tones, not speech";
 
 /// How long shutdown waits for in-flight fetches (each is capped at 30 s).
 const WORKER_DRAIN: Duration = Duration::from_secs(35);
@@ -66,6 +74,7 @@ fn main() -> ExitCode {
         ["server", "--ignore-robots"] => run_server(true),
         // Logs would corrupt the protocol on stdout, so this role logs nothing; errors
         // go to stderr, which the server records.
+        ["tts"] => run_tts(),
         ["extract-worker"] => ExitCode::from(rtm_extract::worker::run(
             &rtm_extract::worker::WorkerLimits::default(),
         )),
@@ -260,6 +269,58 @@ async fn run_server(ignore_robots: bool) -> ExitCode {
         }
         Err(e) => {
             tracing::error!(error = %e, "server failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+const DEFAULT_TTS_LISTEN_ADDR: &str = "127.0.0.1:8090";
+
+/// The engine named by RTM_TTS_ENGINE.
+fn tts_engine() -> Result<Arc<dyn rtm_speech::SpeechEngine>, String> {
+    match std::env::var("RTM_TTS_ENGINE").as_deref() {
+        Ok("fake") => Ok(Arc::new(rtm_speech::FakeEngine)),
+        Ok(other) => Err(format!(
+            "RTM_TTS_ENGINE={other:?}: unknown engine (available: fake)"
+        )),
+        Err(_) => Err("RTM_TTS_ENGINE is not set (available: fake)".into()),
+    }
+}
+
+#[tokio::main]
+async fn run_tts() -> ExitCode {
+    init_logging();
+    let raw =
+        std::env::var("RTM_TTS_LISTEN_ADDR").unwrap_or_else(|_| DEFAULT_TTS_LISTEN_ADDR.into());
+    let config = raw
+        .parse::<SocketAddr>()
+        .map_err(|e| format!("RTM_TTS_LISTEN_ADDR {raw:?} is not a socket address: {e}"))
+        .and_then(|addr| Ok((addr, tts_engine()?)));
+    let (addr, engine) = match config {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::error!(error = %e, "invalid configuration");
+            return ExitCode::FAILURE;
+        }
+    };
+    if engine.id() == "fake" {
+        tracing::warn!("using the fake speech engine: episodes will be tones, not speech");
+    }
+    let listener = match TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(%addr, error = %e, "could not bind");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(%addr, engine = engine.id(), "rtm tts listening");
+    let served = axum::serve(listener, rtm_tts::router(engine))
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
+    match served {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!(error = %e, "tts server failed");
             ExitCode::FAILURE
         }
     }

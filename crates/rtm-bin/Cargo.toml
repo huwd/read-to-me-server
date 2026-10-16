@@ -15,6 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+axum = "0.8"
 ipnet = "2.12.2"
 rtm-api = { version = "0.1.0", path = "../rtm-api" }
 rtm-blobs = { version = "0.1.0", path = "../rtm-blobs" }
@@ -23,7 +24,9 @@ rtm-extract = { version = "0.1.0", path = "../rtm-extract" }
 rtm-fetch = { version = "0.1.0", path = "../rtm-fetch" }
 rtm-narrate = { version = "0.1.0", path = "../rtm-narrate" }
 rtm-pipeline = { version = "0.1.0", path = "../rtm-pipeline" }
+rtm-speech = { version = "0.1.0", path = "../rtm-speech" }
 rtm-store = { version = "0.1.0", path = "../rtm-store" }
+rtm-tts = { version = "0.1.0", path = "../rtm-tts" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
