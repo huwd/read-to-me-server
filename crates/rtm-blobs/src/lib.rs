@@ -18,6 +18,7 @@ use rtm_domain::{BlobKey, Source};
 pub enum BlobKind {
     Source,
     Article,
+    Script,
 }
 
 impl BlobKind {
@@ -25,6 +26,7 @@ impl BlobKind {
         match self {
             BlobKind::Source => "source",
             BlobKind::Article => "article",
+            BlobKind::Script => "script",
         }
     }
 }
@@ -69,6 +71,20 @@ pub fn article_key(source: &Source, extractor: &str, schema_version: u32) -> Blo
             &charset,
             extractor.as_bytes(),
             &schema_version.to_le_bytes(),
+        ],
+    )
+}
+
+/// The key for a narration script: everything the script stage reads. That is the
+/// article (via its key, which covers the article's language), the narrator's version,
+/// and the narration options in a canonical serialised form.
+pub fn script_key(article: &BlobKey, narrator_version: u32, options: &[u8]) -> BlobKey {
+    derive(
+        BlobKind::Script,
+        &[
+            article.as_str().as_bytes(),
+            &narrator_version.to_le_bytes(),
+            options,
         ],
     )
 }
