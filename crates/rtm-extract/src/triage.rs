@@ -2,7 +2,7 @@
 //! Triage (ADR-0006): score every extractor, run the best, check the result, and fall
 //! back to the next candidate if it fails the quality check.
 
-use rtm_article::{Article, Limits};
+use rtm_article::{Article, Block, Limits};
 
 use crate::{Extractor, PlainText, Readability, SourceDocument, Trafilatura, TriageView};
 
@@ -35,6 +35,8 @@ pub struct Extraction {
     pub extractor: &'static str,
     pub version: u32,
     pub words: usize,
+    /// The document had no title, so one was derived ([`fallback_title`]).
+    pub derived_title: bool,
 }
 
 /// Why no acceptable article was found.
@@ -100,6 +102,8 @@ impl Registry {
             return Err(Failure::Unsupported);
         }
         let mut best: Option<Extraction> = None;
+        // The best attempt that passed everything except having a title.
+        let mut untitled: Option<Extraction> = None;
         let mut reasons = Vec::new();
         for extractor in candidates.into_iter().take(self.config.max_attempts) {
             let id = extractor.id();
@@ -122,10 +126,19 @@ impl Registry {
                 article,
                 extractor: id,
                 version: extractor.version(),
+                derived_title: false,
             };
-            match self.quality_problem(&attempt) {
-                None => return Ok(attempt),
-                Some(problem) => {
+            match self.quality(&attempt) {
+                Quality::Pass => return Ok(attempt),
+                // Another extractor may find the title (for instance in metadata), so
+                // try the next before settling for a derived one.
+                Quality::Untitled => {
+                    reasons.push(format!("{id}: no title"));
+                    if untitled.as_ref().is_none_or(|u| attempt.words > u.words) {
+                        untitled = Some(attempt);
+                    }
+                }
+                Quality::TooShort(problem) => {
                     reasons.push(format!("{id}: {problem}"));
                     if best.as_ref().is_none_or(|b| attempt.words > b.words) {
                         best = Some(attempt);
@@ -133,20 +146,90 @@ impl Registry {
                 }
             }
         }
+        if let Some(mut attempt) = untitled {
+            attempt.article.title = fallback_title(doc, &attempt.article);
+            attempt.derived_title = true;
+            return Ok(attempt);
+        }
         Err(Failure::LowConfidence {
             best: best.map(Box::new),
             reasons,
         })
     }
 
-    /// The post-extraction quality check (ADR-0006 step 4), or `None` if it passes.
-    fn quality_problem(&self, attempt: &Extraction) -> Option<String> {
+    /// The post-extraction quality check (ADR-0006 step 4).
+    fn quality(&self, attempt: &Extraction) -> Quality {
         if attempt.words < self.config.min_words {
-            return Some(format!(
+            return Quality::TooShort(format!(
                 "only {} words (minimum {})",
                 attempt.words, self.config.min_words
             ));
         }
-        None
+        if attempt.article.title.trim().is_empty() {
+            return Quality::Untitled;
+        }
+        Quality::Pass
+    }
+}
+
+enum Quality {
+    Pass,
+    Untitled,
+    TooShort(String),
+}
+
+/// Words taken from the start of the text for a derived title.
+const TITLE_WORDS: usize = 10;
+
+/// A title for an article that has none (ADR-0006's quality check needs one, and the
+/// narrator reads it first): the last segment of the URL's path when it reads like
+/// words (`/2026/10/still-water-history.html` → "Still water history"), otherwise the
+/// opening words of the text.
+pub fn fallback_title(doc: &SourceDocument, article: &Article) -> String {
+    let from_url = doc
+        .final_url
+        .as_ref()
+        .and_then(|u| {
+            u.path_segments()?
+                .rev()
+                .find(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .map(|segment| {
+            let stem = segment
+                .rsplit_once('.')
+                .filter(|(_, ext)| matches!(*ext, "html" | "htm" | "php" | "aspx" | "txt"))
+                .map_or(segment.as_str(), |(stem, _)| stem)
+                .to_string();
+            stem.replace(['-', '_', '+'], " ")
+        })
+        .filter(|s| {
+            s.split_whitespace()
+                .filter(|w| w.chars().any(char::is_alphabetic))
+                .count()
+                >= 2
+        });
+    if let Some(words) = from_url {
+        let words = rtm_article::clean_text(&words);
+        let mut chars = words.chars();
+        return chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default();
+    }
+    let opening = article.blocks.iter().find_map(|b| match b {
+        Block::Paragraph { text } | Block::Heading { text, .. } => Some(text.as_str()),
+        _ => None,
+    });
+    match opening {
+        Some(text) => {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            let mut title = words[..words.len().min(TITLE_WORDS)].join(" ");
+            if words.len() > TITLE_WORDS {
+                title.push('…');
+            }
+            title
+        }
+        None => "Untitled article".into(),
     }
 }
