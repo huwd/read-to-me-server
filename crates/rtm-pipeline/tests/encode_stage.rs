@@ -14,7 +14,7 @@ use rtm_domain::{
     ArticleRecord, BlobKey, Item, ItemState, ScriptRecord, Source, SourceKind, SpeechRecord, Stage,
     UserId,
 };
-use rtm_pipeline::{EncodeConfig, EncodeStage, PublishStage, Turn, Worker};
+use rtm_pipeline::{EncodeConfig, EncodeStage, PublishStage, StageRunner, Turn, Worker};
 use rtm_ports::{ItemRepository, JobQueue, StageOutput};
 use rtm_speech::plan::{PlannedSegment, SpeechPlan};
 use rtm_speech::{FakeEngine, SpeechEngine};
@@ -335,4 +335,37 @@ async fn a_missing_encoder_is_retried() {
             next: Stage::Encode
         }
     );
+}
+
+#[tokio::test]
+async fn a_cancelled_encode_leaves_no_scratch_files() {
+    let Some(s) = Setup::new().await else { return };
+    let (item, _) = s.synthesised(&["Some speech to encode."]).await;
+    // A stand-in ffmpeg that reports a version, then hangs as a long encode would.
+    let sleep = tool("sleep").expect("sleep on PATH");
+    let fake = s._dir.path().join("slow-ffmpeg");
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nfor a; do [ \"$a\" = -version ] && echo 'ffmpeg slow' && exit 0; done\nexec {} 60\n",
+            sleep.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let stage = EncodeStage::new(
+        s.blobs.clone(),
+        EncodeConfig {
+            ffmpeg: fake,
+            timeout: Duration::from_secs(120),
+        },
+    );
+    // Dropped part-way through, as when the lease is lost or the server stops.
+    let ran = tokio::time::timeout(Duration::from_millis(500), stage.run(&item)).await;
+    assert!(ran.is_err(), "the stand-in should still be running");
+    let scratch: Vec<_> = std::fs::read_dir(s._dir.path().join("blobs/tmp"))
+        .unwrap()
+        .collect();
+    assert!(scratch.is_empty(), "{scratch:?}");
 }
