@@ -2,6 +2,7 @@
 //! `rtm`: the read-to-me binary. One binary, several process roles (ADR-0002).
 
 mod fetch_config;
+mod healthcheck;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -31,6 +32,8 @@ roles:
                              one document per run over stdin and stdout
   tts                        speech synthesis over HTTP, for the server's
                              synthesise stage
+  healthcheck ADDR           exit 0 if the rtm process at ADDR (e.g.
+                             127.0.0.1:8080) is healthy; for containers
 
 environment:
   RTM_STATIC_TOKEN         API bearer token, at least 32 characters (required;
@@ -96,6 +99,7 @@ fn main() -> ExitCode {
         ["extract-worker"] => ExitCode::from(rtm_extract::worker::run(
             &rtm_extract::worker::WorkerLimits::default(),
         )),
+        ["healthcheck", addr] => healthcheck::run(addr),
         ["--version" | "-V"] => {
             println!("rtm {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
