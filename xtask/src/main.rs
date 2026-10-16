@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use xtask::{commits, docs_links};
+use xtask::{commits, docs_links, kokoro_models};
 
 const USAGE: &str = "\
 usage: cargo xtask <command>
@@ -13,7 +13,8 @@ commands:
   docs-links fix     add definition anchors and turn references in the docs into links
   docs-links check   fail on broken relative links/anchors or unlinked references
   commits [RANGE]    check commit messages in RANGE (default origin/main..HEAD) against
-                     the commit standards: Conventional Commits, 50/72, DCO sign-off";
+                     the commit standards: Conventional Commits, 50/72, DCO sign-off
+  kokoro-models DIR  download the pinned Kokoro model files into DIR and verify them";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -60,6 +61,12 @@ fn main() -> ExitCode {
                     report.failures.len()
                 );
                 report.failures.is_empty()
+            })
+        }
+        ["kokoro-models", dir] => {
+            kokoro_models::fetch(&root, std::path::Path::new(dir)).map(|got| {
+                println!("{} file(s) downloaded; all verified", got.len());
+                true
             })
         }
         _ => {
