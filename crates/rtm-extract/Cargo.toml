@@ -20,7 +20,7 @@ scraper = "0.25.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-trafilatura = "0.3.0"
+trafilatura = "0.5.0"
 url = "2.5.8"
 
 [dev-dependencies]
