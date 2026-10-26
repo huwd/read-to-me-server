@@ -833,6 +833,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2972feb8dffe7bc8c5463b1dacda1b0dfbed3710e50f977d965429692d74cd8"
 
 [[package]]
+name = "ego-tree"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bd50d24b1b75aa817bb0339cb9f2e0e664bdfab1e160a69a0fda9145b77fab2"
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1724,12 +1730,12 @@ dependencies = [
 
 [[package]]
 name = "justext"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58abeb753acf0dcec3849d01739e9e06e5f896985b33aad192163e70706b55db"
+checksum = "1b3a7576d00738f9350d99a254ee67250990ca0013e9a5666e474c78c1f877e9"
 dependencies = [
- "ego-tree",
- "scraper",
+ "ego-tree 0.11.1",
+ "scraper 0.27.0",
  "thiserror 2.0.21",
 ]
 
@@ -1779,17 +1785,17 @@ dependencies = [
 
 [[package]]
 name = "libreadability"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0575f04cb61dd282cf75463426b6d2384db3fb07f7a3c3ba419c5414c3482ff7"
+checksum = "8386db9329530f3f2739834523910a59eb1dc4d9405ce96e7cba87aca1986769"
 dependencies = [
  "chrono",
  "dateparser",
- "ego-tree",
- "html5ever 0.36.1",
- "markup5ever 0.36.1",
+ "ego-tree 0.11.1",
+ "html5ever 0.39.0",
+ "markup5ever 0.39.0",
  "regex",
- "scraper",
+ "scraper 0.27.0",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2682,7 +2688,7 @@ dependencies = [
  "rlimit",
  "rtm-article",
  "rtm-domain",
- "scraper",
+ "scraper 0.25.0",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2984,12 +2990,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93cecd86d6259499c844440546d02f55f3e17bd286e529e48d1f9f67e92315cb"
 dependencies = [
  "cssparser 0.36.0",
- "ego-tree",
+ "ego-tree 0.10.0",
  "getopts",
  "html5ever 0.36.1",
  "precomputed-hash",
  "selectors 0.33.0",
  "tendril 0.4.3",
+]
+
+[[package]]
+name = "scraper"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd0be4d296f048bfb06dd01bbc80ef789ddd2e55583e8d2e6b804942abfabc2"
+dependencies = [
+ "cssparser 0.37.0",
+ "ego-tree 0.11.1",
+ "getopts",
+ "html5ever 0.39.0",
+ "precomputed-hash",
+ "selectors 0.38.0",
+ "tendril 0.5.1",
 ]
 
 [[package]]
@@ -3965,20 +3986,20 @@ dependencies = [
 
 [[package]]
 name = "trafilatura"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb6f4be2db656bb2360d2dc9e575c3cf42ee8197558ba7a2df1e0daf0e1be8f7"
+checksum = "7e1cfacc59a759e8d7c2ac51ac4046f309ab39b4ba2b4858a4d1d55aeb1c4b65"
 dependencies = [
  "chrono",
- "ego-tree",
- "html5ever 0.36.1",
+ "ego-tree 0.11.1",
+ "html5ever 0.39.0",
  "justext",
  "libreadability",
  "regex",
- "scraper",
+ "scraper 0.27.0",
  "serde",
  "serde_json",
- "tendril 0.4.3",
+ "tendril 0.5.1",
  "thiserror 2.0.21",
  "tracing",
  "unicode-normalization",
