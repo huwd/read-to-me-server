@@ -16,7 +16,7 @@ workspace = true
 misaki-rs = { version = "0.6.0", git = "https://github.com/huwd/misaki-rs", rev = "8ac866e079e95acfb53b2a8a36f9c9bc8dd176c6" }
 # ONNX Runtime binaries are downloaded at build time and verified against the SHA-256
 # shipped in ort-sys (ADR-0014). Exact version: the API is still a release candidate.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "copy-dylibs", "api-27"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "copy-dylibs", "api-27"] }
 rtm-speech = { version = "0.1.0", path = "../rtm-speech" }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
